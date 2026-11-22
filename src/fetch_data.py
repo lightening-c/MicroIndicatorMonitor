@@ -230,73 +230,88 @@ def fetch_sw_industry_index(sw_code, ind_id, ind_name):
 #  市场宽度指标（涨跌停板、涨跌家数）
 #  通过东方财富 push2 clist/get 接口拉取全市场股票
 # ═══════════════════════════════════════════════════════════════
+def _breadth_em():
+    """备用：东财 clist（常被限流，返回可能不完整）。"""
+    url = "https://push2.eastmoney.com/api/qt/clist/get"
+    params = {
+        "pn": "1", "pz": "10000", "po": "1", "np": "1",
+        "ut": "bd1d9ddb04089700cf9c27f6f7426281", "fltt": "2", "invt": "2",
+        "fid": "f3", "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23",
+        "fields": "f2,f3,f12,f14", "_": str(int(time.time() * 1000)),
+    }
+    r = requests.get(url, params=params, timeout=30,
+                     headers={"User-Agent": "Mozilla/5.0", "Referer": "https://quote.eastmoney.com/"})
+    data = (r.json() or {}).get("data") or {}
+    rows = data.get("diff") or []
+    if not rows:
+        return None
+    chg = pd.to_numeric(pd.Series([x.get("f3") for x in rows]), errors="coerce")
+    name = pd.Series([str(x.get("f14") or "") for x in rows])
+    code = pd.Series([str(x.get("f12") or "") for x in rows])
+    return chg, name, code
+
+
 def fetch_market_breadth():
-    """获取市场宽度数据：涨跌停板数量、涨跌家数"""
-    print(f"\n>> 采集: 市场宽度数据")
-
+    """市场宽度：涨跌家数 + 涨跌停数。主源新浪快照，备用东财；非交易日跳过。"""
+    print("\n>> 采集: 市场宽度数据")
+    now = datetime.now()
+    # 快照在周末仍保留上一交易日收盘状态，日期取最近交易日（以上证指数为准）
+    trade_date = now.strftime("%Y-%m-%d")
     try:
-        # 使用东财全A股列表接口，一次性获取涨跌停情况和涨跌家数
-        # fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23 表示沪深A股
-        url = "https://push2.eastmoney.com/api/qt/clist/get"
-        params = {
-            "pn": "1",
-            "pz": "10000",
-            "po": "1",
-            "np": "1",
-            "ut": "bd1d9ddb04089700cf9c27f6f7426281",
-            "fltt": "2",
-            "invt": "2",
-            "fid": "f3",
-            "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23",
-            "fields": "f2,f3,f12,f14",
-            "_": str(int(time.time() * 1000)),
-        }
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": "https://quote.eastmoney.com/",
-        }
-        resp = requests.get(url, params=params, headers=headers, timeout=30)
-        data = resp.json()
-
-        if not data.get("data") or not data["data"].get("diff"):
-            print(f"  [WARN] 市场宽度接口返回空数据")
+        _idx = pd.read_csv(os.path.join(DATA_DIR, "sh_index.csv"), usecols=["日期"])
+        trade_date = str(_idx["日期"].dropna().astype(str).iloc[-1])
+    except Exception:
+        if now.weekday() >= 5:
+            print("  [SKIP] 周末且无法确认交易日，跳过市场宽度")
             return None
 
-        stocks = data["data"]["diff"]
-        total = len(stocks)
-        # f2=最新价（非0表示交易日已收盘或正在交易）, f3=涨跌幅
-        up_count = sum(1 for s in stocks if s.get("f3") is not None and s["f3"] > 0)
-        down_count = sum(1 for s in stocks if s.get("f3") is not None and s["f3"] < 0)
-        flat_count = total - up_count - down_count
-
-        # 涨跌停板判断：涨跌幅 >= 9.9%（考虑科创板20%、北交所30%）
-        limit_up = sum(1 for s in stocks if s.get("f3") is not None and s["f3"] >= 9.5)
-        limit_down = sum(1 for s in stocks if s.get("f3") is not None and s["f3"] <= -9.5)
-
-        today = datetime.now().strftime("%Y-%m-%d")
-        results = {}
-
-        # 涨跌停板
-        df_limit = pd.DataFrame([
-            {"日期": today, "涨停数量": limit_up, "跌停数量": limit_down}
-        ])
-        results["limit_stats"] = df_limit
-
-        # 涨跌家数
-        df_advance = pd.DataFrame([
-            {"日期": today, "上涨家数": up_count, "下跌家数": down_count,
-             "平盘家数": flat_count, "涨跌比": round(up_count / max(down_count, 1), 4) if down_count > 0 else None}
-        ])
-        results["advance_decline"] = df_advance
-
-        print(f"  [INFO] 全市场 {total} 只股票，涨{up_count} 跌{down_count} 平{flat_count}，"
-              f"涨停{limit_up} 跌停{limit_down}")
-
-        return results
+    chg = name = code = None
+    try:
+        d = ak.stock_zh_a_spot()
+        code = d["代码"].astype(str)
+        name = d["名称"].astype(str)
+        chg = pd.to_numeric(d["涨跌幅"], errors="coerce")
+        if chg.notna().sum() < 1000:
+            raise RuntimeError("新浪样本不足")
+        src = "新浪"
     except Exception as e:
-        print(f"  [ERR] 市场宽度获取失败: {e}")
-        traceback.print_exc()
+        print(f"  [WARN] 新浪快照失败 {type(e).__name__}，改用东财")
+        try:
+            got = _breadth_em()
+            if got:
+                chg, name, code = got
+                src = "东财"
+        except Exception as e2:
+            print(f"  [ERR] 东财也失败 {type(e2).__name__}")
+    if chg is None:
         return None
+
+    valid = chg.notna()
+    up = int((chg[valid] > 0).sum())
+    down = int((chg[valid] < 0).sum())
+    flat = int((chg[valid] == 0).sum())
+    if up + down < 1000:
+        print(f"  [WARN] 有效样本仅 {up + down} 只，数据不完整，跳过写入")
+        return None
+
+    # 各板涨跌停阈值：主板 10%、创业/科创 20%、北交所 30%，ST 5%
+    lim = pd.Series(9.8, index=chg.index)
+    lim[code.str.startswith(("300", "301", "688"))] = 19.8
+    lim[code.str.startswith(("8", "4", "92"))] = 29.8
+    lim[name.str.contains("ST", na=False)] = 4.8
+    limit_up = int((chg >= lim - 0.15).sum())
+    limit_down = int((chg <= -(lim - 0.15)).sum())
+
+    today = trade_date
+    print(f"  [INFO] 全市场 {int(valid.sum())} 只（{src}），涨{up} 跌{down} 平{flat}，"
+          f"涨停{limit_up} 跌停{limit_down}")
+    return {
+        "limit_stats": pd.DataFrame([{"日期": today, "涨停数量": limit_up, "跌停数量": limit_down}]),
+        "advance_decline": pd.DataFrame([{
+            "日期": today, "上涨家数": up, "下跌家数": down, "平盘家数": flat,
+            "涨跌比": round(up / max(down, 1), 4) if down > 0 else None,
+        }]),
+    }
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>微观指标跟踪系统</title>
-<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<script src="assets/echarts.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
 :root {
@@ -191,6 +191,13 @@ body::after {
   box-shadow:0 1px 0 var(--border);
 }
 .overview-grid { display:grid; grid-template-columns:280px 1fr 1fr; gap:16px; margin-bottom:16px; }
+.overview-grid .chart-panel { height:var(--kpi-h,120px); min-height:var(--kpi-h,120px); padding:8px 14px; overflow:hidden;
+  display:flex; flex-direction:column; justify-content:center; }
+.overview-grid .chart-title { font-size:13px; margin-bottom:4px; }
+.overview-grid .fg-gauge { padding:0; gap:4px; }
+.overview-grid .fg-value { font-size:34px; }
+.overview-grid .fg-bar-wrap { height:8px; max-width:220px; }
+.overview-grid .fg-desc { font-size:12px; }
 @media (max-width:900px) { .overview-grid { grid-template-columns:1fr; } }
 </style>
 </head>
@@ -412,13 +419,18 @@ function renderMarketOverview(){
   html+=`<div class="chart-panel" style="display:flex;flex-direction:column;align-items:center;justify-content:center"><div class="chart-title">恐贪指数</div><div class="fg-gauge"><div class="fg-value" style="color:${fgColor}">${fgVal}</div><div class="fg-bar-wrap"><div class="fg-bar" style="width:${fgPct}%"></div></div><div class="fg-desc">${fgLabel}</div></div></div>`;
 
   const ls=mb.limit_stats||{};
-  html+=`<div class="chart-panel"><div class="chart-title">涨跌停板统计</div><div style="display:flex;gap:40px;align-items:center;padding:20px;justify-content:center;height:280px"><div style="text-align:center"><div style="color:var(--up);font-size:48px;font-family:Orbitron">${ls.latest_limit_up??'--'}</div><div style="color:var(--text);font-size:13px">涨停板</div><div style="font-size:11px;color:var(--c-axis)">5日均 ${ls.limit_up_ma5??'--'}</div></div><div style="text-align:center"><div style="color:var(--down);font-size:48px;font-family:Orbitron">${ls.latest_limit_down??'--'}</div><div style="color:var(--text);font-size:13px">跌停板</div><div style="font-size:11px;color:var(--c-axis)">5日均 ${ls.limit_down_ma5??'--'}</div></div></div></div>`;
+  html+=`<div class="chart-panel"><div class="chart-title">涨跌停板统计</div><div style="display:flex;gap:28px;align-items:center;padding:4px;justify-content:center;flex:1"><div style="text-align:center"><div style="color:var(--up);font-size:30px;font-family:Orbitron">${ls.latest_limit_up??'--'}</div><div style="color:var(--text);font-size:13px">涨停板</div><div style="font-size:11px;color:var(--c-axis)">5日均 ${ls.limit_up_ma5??'--'}</div></div><div style="text-align:center"><div style="color:var(--down);font-size:30px;font-family:Orbitron">${ls.latest_limit_down??'--'}</div><div style="color:var(--text);font-size:13px">跌停板</div><div style="font-size:11px;color:var(--c-axis)">5日均 ${ls.limit_down_ma5??'--'}</div></div></div></div>`;
 
   const ad=mb.advance_decline||{};
-  html+=`<div class="chart-panel"><div class="chart-title">涨跌家数</div><div style="display:flex;gap:30px;align-items:center;padding:20px;justify-content:center;height:280px"><div style="text-align:center"><div style="color:var(--up);font-size:36px;font-family:Orbitron">${ad.latest_up??'--'}</div><div style="color:var(--text);font-size:12px">上涨家数</div></div><div style="text-align:center"><div style="color:var(--down);font-size:36px;font-family:Orbitron">${ad.latest_down??'--'}</div><div style="color:var(--text);font-size:12px">下跌家数</div></div><div style="text-align:center"><div style="font-size:14px;color:var(--text)">涨跌比</div><div style="font-size:28px;font-family:Orbitron;color:${(ad.up_down_ratio||0)>=1?'var(--up)':'var(--down)'}">${ad.up_down_ratio!=null?ad.up_down_ratio.toFixed(2):'--'}</div></div></div></div>`;
+  html+=`<div class="chart-panel"><div class="chart-title">涨跌家数</div><div style="display:flex;gap:24px;align-items:center;padding:4px;justify-content:center;flex:1"><div style="text-align:center"><div style="color:var(--up);font-size:24px;font-family:Orbitron">${ad.latest_up??'--'}</div><div style="color:var(--text);font-size:12px">上涨家数</div></div><div style="text-align:center"><div style="color:var(--down);font-size:24px;font-family:Orbitron">${ad.latest_down??'--'}</div><div style="color:var(--text);font-size:12px">下跌家数</div></div><div style="text-align:center"><div style="font-size:14px;color:var(--text)">涨跌比</div><div style="font-size:20px;font-family:Orbitron;color:${(ad.up_down_ratio||0)>=1?'var(--up)':'var(--down)'}">${ad.up_down_ratio!=null?ad.up_down_ratio.toFixed(2):'--'}</div></div></div></div>`;
   html+='</div>';
 
-  html+='<div class="chart-grid" style="grid-template-columns:1fr"><div class="chart-panel full"><div class="chart-title">大盘指数走势对比（标准化）</div><div class="chart-box" id="chart_major_trend"></div></div></div>';
+  const ms=d.market_summary;
+  if(ms&&ms.text){
+    html+='<div class="chart-panel full" style="margin-bottom:14px;padding:14px 18px">'
+      +'<div class="chart-title" style="margin-bottom:8px">市场综述</div>'
+      +'<div style="font-size:26px;line-height:1.7;color:var(--text)">'+ms.text+'</div></div>';
+  }
 
   html+='<div class="chart-grid" style="grid-template-columns:1fr"><div class="chart-panel full"><div class="chart-title">大盘指数一览</div><div class="scroll-table"><table class="data-table"><thead><tr><th>指数</th><th>最新价</th><th>日涨跌</th><th>成交量<br/>(亿)</th><th>5日涨跌</th><th>20日涨跌</th><th>RSI</th><th>趋势</th><th>布林位置</th></tr></thead><tbody>';
   mi.forEach(idx=>{
@@ -432,7 +444,12 @@ function renderMarketOverview(){
   });
   html+='</tbody></table></div></div></div>';
 
+  html+='<div class="chart-grid" style="grid-template-columns:1fr"><div class="chart-panel full"><div class="chart-title">大盘指数走势对比（标准化）</div><div class="chart-box" id="chart_major_trend"></div></div></div>';
+
+
+
   document.getElementById('tabContent').innerHTML=html;
+  requestAnimationFrame(()=>{const k=document.querySelector('.kpi-card'); if(k) document.documentElement.style.setProperty('--kpi-h', k.offsetHeight+'px');});
 }
 
 /* Tab 1: Broad Indices */

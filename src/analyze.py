@@ -1195,6 +1195,110 @@ def analyze_nfgj(keep_days=None):
     }
 
 
+def analyze_market_summary(results):
+    """市场综述：两市成交额与环比、市值与环比、主要指数、涨跌家数、两融、拥挤度与恐贪。"""
+    from html import escape
+    sents = []
+
+    # 1) 两市成交额（中证全指口径）
+    data_date = ""
+    try:
+        pr = pd.read_csv(os.path.join(DATA_DIR, "crowding_proxy.csv"), dtype={"日期": str})
+        pr["_amt"] = pd.to_numeric(pr["全A成交额"], errors="coerce")
+        pr = pr.dropna(subset=["_amt"]).sort_values("日期")
+        if len(pr):
+            _d = pd.to_datetime(pr["日期"].iloc[-1], errors="coerce")
+            if pd.notna(_d):
+                data_date = f"{_d.year}年{_d.month}月{_d.day}日"
+        if len(pr) >= 2:
+            a0, a1 = float(pr["_amt"].iloc[-1]), float(pr["_amt"].iloc[-2])
+            d = a0 - a1
+            pct = d / a1 * 100 if a1 else 0
+            word = "放量" if d >= 0 else "缩量"
+            color = "#ff3d4f" if d >= 0 else "#00e676"
+            sents.append(f"{data_date}沪深两市成交额 <b>{a0:,.0f} 亿元</b>，较上一交易日"
+                         f"<b style='color:{color}'>{word} {abs(d):,.0f} 亿元（{pct:+.1f}%）</b>。")
+    except Exception:
+        pass
+
+    # 2) 全市场流通市值
+    try:
+        cp = pd.read_csv(os.path.join(DATA_DIR, "cap_structure.csv"), dtype={"日期": str})
+        cols = [c for c in cp.columns if c.endswith("市值") and c != "其他市值" or c == "其他市值"]
+        cols = [c for c in cp.columns if c.endswith("市值")]
+        cp["_mv"] = cp[cols].apply(pd.to_numeric, errors="coerce").sum(axis=1)
+        cp = cp.dropna(subset=["_mv"]).sort_values("日期")
+        if len(cp) >= 2:
+            m0, m1 = float(cp["_mv"].iloc[-1]) / 1e4, float(cp["_mv"].iloc[-2]) / 1e4
+            dm = m0 - m1
+            word = "扩大" if dm >= 0 else "缩小"
+            color = "#ff3d4f" if dm >= 0 else "#00e676"
+            sents.append(f"全市场流通市值 <b>{m0:.2f} 万亿元</b>，较前一日"
+                         f"<b style='color:{color}'>{word} {abs(dm):.2f} 万亿元</b>。")
+    except Exception:
+        pass
+
+    # 3) 主要指数
+    try:
+        mi = results.get("major_indices") or []
+        seg = "、".join(
+            f"{i['name']} {i['latest_value']:,.0f}（<b style='color:{'#ff3d4f' if (i.get('change_1d') or 0) >= 0 else '#00e676'}'>{i['change_1d']:+.2f}%</b>）"
+            for i in mi if i.get("latest_value") is not None and i.get("change_1d") is not None)
+        if seg:
+            sents.append(seg + "。")
+    except Exception:
+        pass
+
+    # 4) 涨跌家数与涨跌停
+    try:
+        mb = results.get("market_breadth") or {}
+        ad = mb.get("advance_decline") or {}
+        ls = mb.get("limit_stats") or {}
+        seg = []
+        up, dn = ad.get("latest_up"), ad.get("latest_down")
+        # 涨跌家数需覆盖大部分个股才可信（抓取不完整时会明显偏小）
+        if up is not None and dn is not None and (up + dn) >= 1000:
+            seg.append(f"上涨 <b>{up}</b> 家、下跌 <b>{dn}</b> 家")
+        lu, ld = ls.get("latest_limit_up"), ls.get("latest_limit_down")
+        if lu is not None and ld is not None:
+            seg.append(f"涨停 <b>{lu}</b> 家、跌停 <b>{ld}</b> 家")
+        if seg:
+            sents.append("；".join(seg) + "。")
+    except Exception:
+        pass
+
+    # 5) 两融余额
+    try:
+        mb2 = (results.get("sentiment") or {}).get("margin_balance") or {}
+        if mb2.get("latest_value") is not None:
+            ch = mb2.get("change_5d")
+            txt = f"两融余额 <b>{mb2['latest_value']:,.0f} 亿元</b>"
+            if ch is not None:
+                txt += f"（5 日 {ch:+.1f}%）"
+            sents.append(txt + "。")
+    except Exception:
+        pass
+
+    # 6) 拥挤度与恐贪
+    try:
+        cr = (results.get("market_crowding") or {}).get("latest_crowding")
+        fg = results.get("fear_greed_index")
+        seg = []
+        if cr is not None:
+            seg.append(f"市场拥挤度 <b>{cr:.1f}%</b>")
+        if fg is not None:
+            lab = "极度恐惧" if fg < 25 else "恐惧" if fg < 45 else "中性" if fg <= 55 else "贪婪" if fg <= 75 else "极度贪婪"
+            seg.append(f"恐贪指数 <b>{fg}</b>（{lab}）")
+        if seg:
+            sents.append("，".join(seg) + "。")
+    except Exception:
+        pass
+
+    if not sents:
+        return None
+    return {"text": "".join(sents), "date": datetime.now().strftime("%Y-%m-%d")}
+
+
 def run_analysis():
     config = load_config()
     chart_cfg = config.get("chart", {})
@@ -1505,6 +1609,12 @@ def run_analysis():
             L = n["latest"]
             print(f"    [OK] {n['name']}: 占比 {L['pct']:.2f}%  规模 {L['etf_mv_yi']:.0f} 亿  "
                   f"20日 {L['net20_yi']:+,.0f} 亿  60日 {L['net60_yi']:+,.0f} 亿")
+
+    # ── 10.5 市场综述 ──
+    try:
+        results["market_summary"] = analyze_market_summary(results)
+    except Exception as e:
+        print(f"    [WARN] 市场综述生成失败: {e}")
 
     # ── Save ──
     os.makedirs(DATA_DIR, exist_ok=True)
