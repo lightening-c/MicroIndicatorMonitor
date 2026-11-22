@@ -1197,15 +1197,30 @@ def analyze_nfgj(keep_days=None):
     }
 
 
+def latest_trade_date():
+    """最近交易日（以上证指数日线为准），读取失败时回退今天。"""
+    try:
+        df = pd.read_csv(os.path.join(DATA_DIR, "sh_index.csv"),
+                         usecols=["日期"], dtype={"日期": str})
+        dates = df["日期"].dropna().astype(str)
+        if len(dates):
+            return dates.max()
+    except Exception:
+        pass
+    return datetime.now().strftime("%Y-%m-%d")
+
+
 def analyze_market_summary(results):
     """市场综述：两市成交额与环比、市值与环比、主要指数、涨跌家数、两融、拥挤度与恐贪。"""
     from html import escape
     sents = []
+    trade_date = latest_trade_date()
 
     # 1) 两市成交额（中证全指口径）
     data_date = ""
     try:
         pr = pd.read_csv(os.path.join(DATA_DIR, "crowding_proxy.csv"), dtype={"日期": str})
+        pr = pr[pr["日期"].astype(str) <= trade_date]
         pr["_amt"] = pd.to_numeric(pr["全A成交额"], errors="coerce")
         pr = pr.dropna(subset=["_amt"]).sort_values("日期")
         if len(pr):
@@ -1226,6 +1241,7 @@ def analyze_market_summary(results):
     # 2) 全市场流通市值
     try:
         cp = pd.read_csv(os.path.join(DATA_DIR, "cap_structure.csv"), dtype={"日期": str})
+        cp = cp[cp["日期"].astype(str) <= trade_date]
         cols = [c for c in cp.columns if c.endswith("市值") and c != "其他市值" or c == "其他市值"]
         cols = [c for c in cp.columns if c.endswith("市值")]
         cp["_mv"] = cp[cols].apply(pd.to_numeric, errors="coerce").sum(axis=1)
@@ -1281,9 +1297,12 @@ def analyze_market_summary(results):
     except Exception:
         pass
 
-    # 6) 拥挤度与恐贪
+    # 6) 拥挤度与恐贪（拥挤度仅在与最近交易日同日时采用）
     try:
-        cr = (results.get("market_crowding") or {}).get("latest_crowding")
+        cr_info = results.get("market_crowding") or {}
+        cr = cr_info.get("latest_crowding")
+        if cr_info.get("latest_date") != trade_date:
+            cr = None
         fg = results.get("fear_greed_index")
         seg = []
         if cr is not None:
@@ -1298,7 +1317,7 @@ def analyze_market_summary(results):
 
     if not sents:
         return None
-    return {"text": "".join(sents), "date": datetime.now().strftime("%Y-%m-%d")}
+    return {"text": "".join(sents), "date": trade_date}
 
 
 def run_analysis():
@@ -1425,6 +1444,9 @@ def run_analysis():
     if os.path.exists(crowding_file):
         try:
             df_cr = pd.read_csv(crowding_file, encoding="utf-8-sig")
+            df_cr["日期"] = df_cr["日期"].astype(str)
+            # 只保留最近交易日及以前，过滤周末/非交易日写入的快照
+            df_cr = df_cr[df_cr["日期"] <= latest_trade_date()].sort_values("日期")
             if not df_cr.empty:
                 df_cr["_v"] = pd.to_numeric(df_cr["拥挤度"], errors="coerce")
                 valid = df_cr[df_cr["_v"].notna()]
