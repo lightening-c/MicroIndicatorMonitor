@@ -237,32 +237,33 @@ def compute_valuation_level(pct):
 # ═══════════════════════════════════════════════════════════════
 #  Sentiment composite index (Fear & Greed)
 # ═══════════════════════════════════════════════════════════════
-def compute_index_volatility(csv_path, window=20):
-    """近 window 个交易日年化波动率（%），数据不足返回 None。"""
+def compute_index_volatility(csv_path, halflife=5):
+    """指数加权的年化波动率（%），半衰期 halflife 个交易日；数据不足返回 None。"""
     if not os.path.exists(csv_path):
         return None
     df = pd.read_csv(csv_path, encoding="utf-8-sig")
-    if "close" not in df.columns or len(df) < window + 1:
+    if "close" not in df.columns or len(df) < halflife + 1:
         return None
     close = pd.to_numeric(df.sort_values("日期")["close"], errors="coerce")
     ret = close.pct_change().dropna()
-    if len(ret) < window:
+    if len(ret) < halflife:
         return None
-    return round(float(ret.tail(window).std() * np.sqrt(252) * 100), 2)
+    sigma = ret.ewm(halflife=halflife).std().iloc[-1]
+    return round(float(sigma * np.sqrt(252) * 100), 2)
 
 
 # 波动率映射：年化 10% 视为极低波动(100 分)，45% 视为极高波动(0 分)
 VOL_CALM = 10.0
 VOL_PANIC = 45.0
-# 涨跌比因子下限：单日极端普跌不应单独把指数打到 0
-UD_RATIO_FLOOR = 10
+# 涨跌比因子下限：几何平均下取 1，避免单日极端值把指数直接打到 0
+UD_RATIO_FLOOR = 1
 
 
 def compute_fear_greed_index(margin_change=None, up_down_ratio=None,
                               volume_deviation=None, volatility=None):
     """
     自建恐贪指数：0-100 分数，值越大越贪婪
-    因子标准化后等权平均；volatility 为年化波动率（%）
+    因子标准化后取几何平均；volatility 为年化波动率（%）
     """
     factors = []
 
@@ -294,7 +295,8 @@ def compute_fear_greed_index(margin_change=None, up_down_ratio=None,
     if not factors:
         return 50
 
-    index = np.mean(factors)
+    # 几何平均：任一维度进入极端区间都会显著拉低综合值，避免被其他维度平均掉
+    index = float(np.exp(np.mean(np.log(np.clip(factors, 1, 100)))))
     return round(index, 1)
 
 
@@ -1405,7 +1407,7 @@ def run_analysis():
                 vol_dev = vol_data[k]["change_5d"]
                 break
 
-    # Volatility: 中证800 近 20 日年化波动
+    # Volatility: 中证800 EWMA 年化波动（半衰期 5 日）
     volatility = compute_index_volatility(os.path.join(DATA_DIR, "zz800.csv"))
     if volatility is None:
         print("  [WARN] zz800.csv 数据不足，波动率因子跳过")
