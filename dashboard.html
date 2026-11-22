@@ -190,7 +190,7 @@ body::after {
   background:var(--panel);
   box-shadow:0 1px 0 var(--border);
 }
-.overview-grid { display:grid; grid-template-columns:280px 1fr 1fr; gap:16px; margin-bottom:16px; }
+.overview-grid { display:grid; grid-template-columns:280px 1fr 1fr 1fr; gap:16px; margin-bottom:16px; }
 .overview-grid .chart-panel { height:var(--kpi-h,120px); min-height:var(--kpi-h,120px); padding:8px 14px; overflow:hidden;
   display:flex; flex-direction:column; justify-content:center; }
 .overview-grid .chart-title { font-size:13px; margin-bottom:4px; }
@@ -416,6 +416,8 @@ function renderMarketOverview(){
   const fgColor=fgVal<25?CS('--up'):fgVal<45?CS('--orange'):fgVal<55?CS('--yellow'):fgVal<75?CS('--down'):CS('--accent');
 
   html+='<div class="overview-grid">';
+  const crOv=d.market_crowding||{}, crowdOv=crOv.latest_crowding;
+  html+=`<div class="chart-panel" style="align-items:center;justify-content:center;display:flex;flex-direction:column"><div class="chart-title">市场拥挤度</div><div style="font-size:34px;font-family:Orbitron;font-weight:700;color:${crowdOv>40?'var(--red)':crowdOv>30?'var(--orange)':'var(--green)'}">${crowdOv!=null?crowdOv.toFixed(1)+'%':'--'}</div><div style="font-size:12px;color:var(--c-axis);margin-top:2px">前5%个股成交占比</div></div>`;
   html+=`<div class="chart-panel" style="display:flex;flex-direction:column;align-items:center;justify-content:center"><div class="chart-title">恐贪指数</div><div class="fg-gauge"><div class="fg-value" style="color:${fgColor}">${fgVal}</div><div class="fg-bar-wrap"><div class="fg-bar" style="width:${fgPct}%"></div></div><div class="fg-desc">${fgLabel}</div></div></div>`;
 
   const ls=mb.limit_stats||{};
@@ -589,8 +591,8 @@ function renderSentiment(){
     const spCls=sp>0?'down':'up';   // 现价高于成本=浮盈（用红涨绿跌的语义：高于成本视为盈利）
     html+=`<div class="kpi-card"><div class="kpi-label">融资盘成本</div><div class="kpi-value">${mcost.latest_cost?.toFixed(0)||'--'}<span style="font-size:16px"> 点</span></div><div class="kpi-change">上证 ${mcost.latest_index?.toFixed(0)} · 溢价 <span class="${sp>0?'up':sp<0?'down':'flat'}">${sp!=null?(sp>0?'+':'')+sp.toFixed(2)+'%':'--'}</span></div></div>`;
   }
-  html+=`<div class="kpi-card"><div class="kpi-label">恐贪指数</div><div class="kpi-value" style="color:${fg<25?'var(--red)':fg<45?'var(--orange)':fg<55?'var(--yellow)':fg<75?'var(--red)':'var(--accent)'}">${fg||50}</div><div class="kpi-change">${fg<25?'极度恐惧':fg<45?'恐惧':fg<55?'中性':fg<75?'贪婪':'极度贪婪'}</div></div>`;
   html+=`<div class="kpi-card"><div class="kpi-label">市场拥挤度</div><div class="kpi-value" style="color:${crowding>40?'var(--red)':crowding>30?'var(--orange)':'var(--green)'}">${crowding!=null?crowding.toFixed(1)+'%':'--'}</div><div class="kpi-change">前5%个股成交占比</div></div>`;
+  html+=`<div class="kpi-card"><div class="kpi-label">恐贪指数</div><div class="kpi-value" style="color:${fg<25?'var(--red)':fg<45?'var(--orange)':fg<55?'var(--yellow)':fg<75?'var(--red)':'var(--accent)'}">${fg||50}</div><div class="kpi-change">${fg<25?'极度恐惧':fg<45?'恐惧':fg<55?'中性':fg<75?'贪婪':'极度贪婪'}</div></div>`;
   html+='</div>';
 
   html+='<div class="chart-grid">';
