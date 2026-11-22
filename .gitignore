@@ -1,0 +1,20 @@
+# 运行时数据目录，仅保留 ETF 清单作为初始样本
+data/*
+!data/.gitkeep
+!data/nfgj_etf_list_*.csv
+
+# 导出的图表与报告
+exports/*
+!exports/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 本地工具与系统文件
+.claude/
+*.log
+.DS_Store
+Thumbs.db

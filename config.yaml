@@ -1,0 +1,292 @@
+# 微观指标跟踪 — 指标体系配置
+# 分类：大盘指数 / 宽基指数 / 风格指数 / 行业指数 / 市场宽度 / 成交量 / 情绪指标 / ETF估值
+
+indicators:
+  # ── 各大盘指数 (5) ──────────────────────────────────
+  major_indices:
+    - id: sh_index
+      name: 上证综合指数
+      unit: 点
+      source: 上交所
+      frequency: 每日
+      description: 沪市主板综合指数
+      akshare_func: stock_zh_index_daily
+      akshare_params: { symbol: sh000001 }
+
+    - id: sz_index
+      name: 深证成指
+      unit: 点
+      source: 深交所
+      frequency: 每日
+      description: 深市主板代表指数
+      akshare_func: stock_zh_index_daily
+      akshare_params: { symbol: sz399001 }
+
+    - id: chinext_index
+      name: 创业板指
+      unit: 点
+      source: 深交所
+      frequency: 每日
+      description: 创业板代表指数
+      akshare_func: stock_zh_index_daily
+      akshare_params: { symbol: sz399006 }
+
+    - id: star50_index
+      name: 科创50
+      unit: 点
+      source: 上交所
+      frequency: 每日
+      description: 科创板代表指数
+      akshare_func: stock_zh_index_daily
+      akshare_params: { symbol: sh000688 }
+
+    - id: bj50_index
+      name: 北证50
+      unit: 点
+      source: 北交所
+      frequency: 每日
+      description: 北交所代表指数
+      akshare_func: stock_zh_index_daily
+      akshare_params: { symbol: bj899050 }
+
+  # ── 宽基指数 (10) ──────────────────────────────────
+  broad_indices:
+    - id: hs300
+      name: 沪深300
+      unit: 点
+      source: 中证指数公司
+      frequency: 每日
+      description: 大盘蓝筹代表指数
+      akshare_func: stock_zh_index_daily
+      akshare_params: { symbol: sh000300 }
+      etf_code: "510300"
+      etf_name: 华泰柏瑞沪深300ETF
+
+    - id: a500
+      name: 中证A500
+      unit: 点
+      source: 中证指数公司
+      frequency: 每日
+      description: 新一代宽基旗舰指数
+      akshare_func: stock_zh_index_daily
+      akshare_params: { symbol: sh000510 }
+      etf_code: "159338"
+      etf_name: 嘉实中证A500ETF
+
+    - id: zz800
+      name: 中证800
+      unit: 点
+      source: 中证指数公司
+      frequency: 每日
+      description: 大中盘代表指数(沪深300+中证500)
+      akshare_func: stock_zh_index_daily
+      akshare_params: { symbol: sh000906 }
+
+    - id: zz500
+      name: 中证500
+      unit: 点
+      source: 中证指数公司
+      frequency: 每日
+      description: 中盘代表指数
+      akshare_func: stock_zh_index_daily
+      akshare_params: { symbol: sh000905 }
+      etf_code: "510500"
+      etf_name: 南方中证500ETF
+
+    - id: zz1000
+      name: 中证1000
+      unit: 点
+      source: 中证指数公司
+      frequency: 每日
+      description: 小盘代表指数
+      akshare_func: stock_zh_index_daily
+      akshare_params: { symbol: sh000852 }
+      etf_code: "512100"
+      etf_name: 南方中证1000ETF
+
+    - id: zz2000
+      name: 中证2000
+      unit: 点
+      source: 中证指数公司
+      frequency: 每日
+      description: 微盘代表指数
+      akshare_func: stock_zh_index_daily
+      akshare_params: { symbol: sh000932 }
+      etf_code: "563300"
+      etf_name: 华泰柏瑞中证2000ETF
+
+    - id: sz50
+      name: 上证50
+      unit: 点
+      source: 上交所
+      frequency: 每日
+      description: 沪市超级大盘代表
+      akshare_func: stock_zh_index_daily
+      akshare_params: { symbol: sh000016 }
+      etf_code: "510050"
+      etf_name: 华夏上证50ETF
+
+    - id: gz2000
+      name: 国证2000
+      unit: 点
+      source: 深交所
+      frequency: 每日
+      description: 小盘/微盘代表指数
+      akshare_func: stock_zh_index_daily
+      akshare_params: { symbol: sz399303 }
+      etf_code: "159628"
+      etf_name: 万家国证2000ETF
+
+    - id: chinext_broad
+      name: 创业板指数
+      unit: 点
+      source: 深交所
+      frequency: 每日
+      description: 创业板宽基指数(全收益)
+      akshare_func: stock_zh_index_daily
+      akshare_params: { symbol: sz399006 }
+      etf_code: "159915"
+      etf_name: 易方达创业板ETF
+
+    - id: microcap
+      name: 微盘股指数
+      unit: 点
+      source: 万得
+      frequency: 每日
+      description: 万得微盘股指数(国证2000代理)
+      akshare_func: stock_zh_index_daily
+      akshare_params: { symbol: sz399303 }
+      etf_code: "159655"
+      etf_name: 华夏中证2000ETF(替代)
+
+  # ── 风格指数 (6) ──────────────────────────────────
+  style_indices:
+    - id: lg_value
+      name: 大盘价值
+      unit: 点
+      source: 中证指数公司
+      frequency: 每日
+      description: 大盘价值风格
+      akshare_func: stock_zh_index_daily
+      akshare_params: { symbol: sz399372 }
+
+    - id: lg_growth
+      name: 大盘成长
+      unit: 点
+      source: 中证指数公司
+      frequency: 每日
+      description: 大盘成长风格
+      akshare_func: stock_zh_index_daily
+      akshare_params: { symbol: sz399373 }
+
+    - id: md_value
+      name: 中盘价值
+      unit: 点
+      source: 中证指数公司
+      frequency: 每日
+      description: 中盘价值风格
+      akshare_func: stock_zh_index_daily
+      akshare_params: { symbol: sz399374 }
+
+    - id: md_growth
+      name: 中盘成长
+      unit: 点
+      source: 中证指数公司
+      frequency: 每日
+      description: 中盘成长风格
+      akshare_func: stock_zh_index_daily
+      akshare_params: { symbol: sz399375 }
+
+    - id: sm_value
+      name: 小盘价值
+      unit: 点
+      source: 中证指数公司
+      frequency: 每日
+      description: 小盘价值风格
+      akshare_func: stock_zh_index_daily
+      akshare_params: { symbol: sz399376 }
+
+    - id: sm_growth
+      name: 小盘成长
+      unit: 点
+      source: 中证指数公司
+      frequency: 每日
+      description: 小盘成长风格
+      akshare_func: stock_zh_index_daily
+      akshare_params: { symbol: sz399377 }
+
+# 图表配置
+chart:
+  daily_display_points: 120
+  ma_short: 5
+  ma_long: 20
+  rsi_period: 14
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal: 9
+  boll_period: 20
+  boll_std: 2
+
+# 情绪综合指数权重
+sentiment:
+  margin_weight: 0.25     # 融资余额变化
+  breadth_weight: 0.25    # 涨跌比
+  volume_weight: 0.25     # 成交量偏离
+  volatility_weight: 0.25  # 波动率
+
+# ETF 估值阈值
+etf_valuation:
+  undervalued_threshold: 20    # PE 分位 < 20% 低估
+  overvalued_threshold: 80     # PE 分位 > 80% 高估
+  pe_lookback_years: 5         # PE 分位默认回看年数
+  pb_lookback_years: 5         # PB 分位默认回看年数
+
+# 国家队资金跟踪：ETF 总市值 / 指数流通市值，及其 20/60 日斜率
+# 数据源：份额(上交所 query.sse.com.cn / 深交所 akshare fund_scale_daily_szse)
+#         价格(akshare fund_etf_hist_em)  点位(中证指数 / 东财K线)  流通市值(东财快照标定)
+nfgj:
+  start_date: "20180101"
+  # ETF 基础信息表（含 ETF代码/ETF简称/跟踪指数代码）
+  # 相对路径基于项目根目录；也可填绝对路径。文件不存在时使用 data/nfgj_etf_list_*.csv 缓存
+  etf_list_source: "data/etf_list_source.csv"
+  indices:
+    - key: sz50
+      name: 上证50
+      etf_track: "000016.SH"
+      csindex_code: "000016"
+      em_secid: "1.000016"
+    - key: hs300
+      name: 沪深300
+      etf_track: "000300.SH"
+      csindex_code: "000300"
+      em_secid: "1.000300"
+    - key: zz500
+      name: 中证500
+      etf_track: "000905.SH"
+      csindex_code: "000905"
+      em_secid: "1.000905"
+    - key: zz1000
+      name: 中证1000
+      etf_track: "000852.SH"
+      csindex_code: "000852"
+      em_secid: "1.000852"
+    - key: zz2000
+      name: 中证2000
+      etf_track: "932000.CSI"
+      csindex_code: "932000"
+      em_secid: "2.932000"
+    - key: star50
+      name: 科创50
+      etf_track: "000688.SH"
+      csindex_code: "000688"
+      em_secid: "1.000688"
+    - key: chinext
+      name: 创业板指
+      etf_track: "399006.SZ"
+      csindex_code: ""          # 中证指数不覆盖深证指数，改用东财K线
+      em_secid: "0.399006"
+    - key: broker
+      name: 证券ETF
+      etf_track: "399975.SZ"
+      csindex_code: "399975"    # 中证全指证券公司指数
+      em_secid: "0.399975"
