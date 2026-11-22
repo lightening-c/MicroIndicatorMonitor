@@ -648,9 +648,13 @@ def analyze_margin_cost(keep=250):
     cur_px = float(last["px"])
     spread = (cur_px / float(last["cost"]) - 1) * 100 if last["cost"] else None
     tail = d.tail(keep)
+    # 平仓线估算：融资保证金比例 80% → 初始维持担保比例 180%，平仓线 130%
+    # => 可承受跌幅 27.8%，平仓价 ≈ 平均成本 × 0.72
+    LIQ = 0.72
     ts = [{"date": r["date"].strftime("%Y-%m-%d"),
            "cost": round(float(r["cost"]), 1),
-           "index": round(float(r["px"]), 1)}
+           "index": round(float(r["px"]), 1),
+           "close_line": round(float(r["cost"]) * LIQ, 1)}
           for _, r in tail.iterrows()]
 
     return {
@@ -660,6 +664,9 @@ def analyze_margin_cost(keep=250):
         "latest_index": round(cur_px, 1),
         "latest_date": last["date"].strftime("%Y-%m-%d"),
         "spread_pct": round(spread, 2) if spread is not None else None,
+        "close_line": round(float(last["cost"]) * LIQ, 1),
+        "liq_factor": LIQ,
+        "liq_note": "按融资保证金 80%（初始维持担保比例 180%）、平仓线 130% 估算（成本×0.72）",
         "ts_data": ts,
     }
 
@@ -1294,6 +1301,17 @@ def analyze_market_summary(results):
             if ch is not None:
                 txt += f"（5 日 {ch:+.1f}%）"
             sents.append(txt + "。")
+    except Exception:
+        pass
+
+    # 5.1 融资成本线（上证指数对应点位与乖离率）
+    try:
+        mc = (results.get("sentiment") or {}).get("margin_cost") or {}
+        cost, idx, spread = mc.get("latest_cost"), mc.get("latest_index"), mc.get("spread_pct")
+        if cost is not None and idx is not None and spread is not None:
+            color = "#00e676" if spread < 0 else "#ff3d4f"
+            sents.append(f"融资成本线点位 <b>{cost:,.0f} 点</b>（上证 <b>{idx:,.0f}</b>，"
+                         f"乖离率 <b style='color:{color}'>{spread:+.2f}%</b>）。")
     except Exception:
         pass
 
