@@ -33,6 +33,7 @@
 import json
 import os
 import random
+import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -344,6 +345,61 @@ def fetch_sse_shares(dates):
     return fails
 
 
+def _fetch_szse_via_curl(start_date, end_date):
+    """深交所官网 HTTPS 对 Python 的 SSL 握手经常失败（UNEXPECTED_EOF），
+    但 curl（走系统 SSL 库）能正常访问。用 curl 子进程下载绕开该问题，
+    返回与 akshare fund_scale_daily_szse 兼容的 DataFrame（日期/基金代码/基金份额）。"""
+    import subprocess, tempfile
+    # 深交所接口要求 YYYY-MM-DD 格式（不带横杠会返回空表）
+    s = f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:]}"
+    e = f"{end_date[:4]}-{end_date[4:6]}-{end_date[6:]}"
+    url = ("https://www.szse.cn/api/report/ShowReport?SHOWTYPE=xlsx&CATALOGID=scsj_fund_jjgm"
+           f"&TABKEY=tab1&txtStart={s}&txtEnd={e}&jjlb=ETF&random={random.random()}")
+    path = None
+    try:
+        fd, path = tempfile.mkstemp(suffix=".xlsx")
+        os.close(fd)
+        curl = shutil.which("curl") or shutil.which("curl.exe") or "curl"
+        cmd = [curl, "-sS", "-m", "30", "-o", path,
+               "-A", HDR["User-Agent"],
+               "-H", "Referer: https://www.szse.cn/market/fund/volume/etf/index.html",
+               url]
+        subprocess.run(cmd, check=False, capture_output=True, timeout=45)
+        if not os.path.exists(path) or os.path.getsize(path) < 500:
+            return None
+        df = pd.read_excel(path, engine="openpyxl")
+        if df is None or df.empty:
+            return None
+        # 兼容列名：原始列为 日期/基金代码/基金简称/基金规模(亿份)
+        for c in df.columns:
+            if "规模" in str(c) or "份额" in str(c):
+                df = df.rename(columns={c: "基金份额"})
+        code_col = next((c for c in df.columns if "代码" in str(c)), None)
+        date_col = next((c for c in df.columns if "日期" in str(c)), None)
+        if code_col is None or date_col is None or "基金份额" not in df.columns:
+            return None
+        df["基金份额"] = pd.to_numeric(
+            df["基金份额"].astype(str).str.replace(",", "", regex=False), errors="coerce")
+        df["_code"] = pd.to_numeric(df[code_col], errors="coerce")
+        df["_date"] = pd.to_datetime(df[date_col], errors="coerce").dt.date
+        df = df.dropna(subset=["_code", "_date"]).copy()
+        out = pd.DataFrame({
+            "日期": df["_date"],
+            "基金代码": df["_code"].astype(int).astype(str).str.zfill(6),
+            "基金份额": df["基金份额"],
+        })
+        return out.dropna(subset=["基金份额"])
+    except Exception as e:
+        print(f"  [WARN] curl 下载深交所份额失败: {type(e).__name__}: {e}")
+        return None
+    finally:
+        if path and os.path.exists(path):
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+
+
 def fetch_szse_shares(dates):
     have = _cached_dates("szse")
     todo = [d for d in dates if d not in have]
@@ -362,18 +418,21 @@ def fetch_szse_shares(dates):
     fails = []
     for i, (s, e) in enumerate(chunks, 1):
         for k in range(3):
+            df = None
             try:
                 df = ak.fund_scale_daily_szse(start_date=s.strftime("%Y%m%d"),
                                               end_date=e.strftime("%Y%m%d"), symbol="ETF")
-                if df is not None and len(df):
-                    _append_shares("szse", pd.DataFrame({
-                        "date": pd.to_datetime(df["日期"]).dt.strftime("%Y%m%d"),
-                        "code": df["基金代码"].astype(str).str.zfill(6) + ".SZ",
-                        "shares": pd.to_numeric(df["基金份额"], errors="coerce"),
-                    }).dropna(subset=["shares"]))
-                break
             except Exception:
-                time.sleep(2 * (k + 1))
+                # 深交所 HTTPS 对 Python SSL 常失败，fallback 到 curl
+                df = _fetch_szse_via_curl(s.strftime("%Y%m%d"), e.strftime("%Y%m%d"))
+            if df is not None and len(df):
+                _append_shares("szse", pd.DataFrame({
+                    "date": pd.to_datetime(df["日期"]).dt.strftime("%Y%m%d"),
+                    "code": df["基金代码"].astype(str).str.zfill(6) + ".SZ",
+                    "shares": pd.to_numeric(df["基金份额"], errors="coerce"),
+                }).dropna(subset=["shares"]))
+                break
+            time.sleep(2 * (k + 1))
         else:
             fails.append((str(s.date()), str(e.date())))
         time.sleep(0.3)
