@@ -96,14 +96,47 @@ def save_csv(df, indicator_id):
     if date_col is None:
         date_col = df.columns[0]
 
+    # 主键：优先 日期+代码/日期+key，避免同一天多只标的被误去重
+    key_cols = [date_col]
+    for extra in ("code", "代码", "key"):
+        if extra in df.columns:
+            key_cols.append(extra)
+            break
+
+    def _norm_date(frame):
+        if date_col not in frame.columns:
+            return frame
+        frame = frame.copy()
+        raw = frame[date_col]
+        _s = raw.astype(str).str.strip()
+        # YYYYMMDD 必须显式指定格式，否则会被当成纳秒时间戳解析成 1970
+        if _s.str.fullmatch(r"\d{8}").mean() > 0.8:
+            parsed = pd.to_datetime(_s, format="%Y%m%d", errors="coerce")
+        else:
+            parsed = pd.to_datetime(_s, errors="coerce")
+        if parsed.notna().mean() > 0.8:
+            frame[date_col] = parsed.dt.strftime("%Y-%m-%d").fillna(raw.astype(str))
+        else:
+            frame[date_col] = raw.astype(str)
+        return frame
+
+    df = _norm_date(df)
     try:
-        df = df.drop_duplicates(subset=[date_col], keep="last")
-        df = df.sort_values(date_col)
+        df = df.drop_duplicates(subset=key_cols, keep="last").sort_values(date_col)
     except Exception:
         pass
 
     filename = f"{indicator_id}.csv"
     filepath = os.path.join(DATA_DIR, filename)
+    # 与已有文件合并（按主键去重保留最新），避免单日快照把历史覆盖掉
+    if os.path.exists(filepath):
+        try:
+            old = pd.read_csv(filepath)
+            old = _norm_date(old)
+            df = pd.concat([old, df], ignore_index=True)
+            df = df.drop_duplicates(subset=key_cols, keep="last").sort_values(date_col)
+        except Exception:
+            pass
     df.to_csv(filepath, index=False, encoding="utf-8-sig")
     print(f"  [OK] 保存 {filename} ({len(df)} 条记录)")
     return True
@@ -112,6 +145,67 @@ def save_csv(df, indicator_id):
 # ═══════════════════════════════════════════════════════════════
 #  指数日线数据获取（akshare stock_zh_index_daily）
 # ═══════════════════════════════════════════════════════════════
+def _sina_quote(codes):
+    """批量取新浪实时报价：返回 {code: {date, open, high, low, close, volume, amount}}。"""
+    import requests as _rq
+    import urllib3 as _u3
+    _u3.disable_warnings()
+    try:
+        q = _rq.Session()
+        q.trust_env = False
+        r = q.get("https://hq.sinajs.cn/list=" + ",".join(codes),
+                  headers={"Referer": "https://finance.sina.com.cn",
+                           "User-Agent": "Mozilla/5.0"},
+                  timeout=10, verify=False)
+        txt = r.content.decode("gbk", errors="ignore")
+    except Exception:
+        return {}
+    out = {}
+    for line in txt.strip().splitlines():
+        if '="' not in line:
+            continue
+        code = line.split("=")[0].split("_")[-1]
+        parts = line.split('"')[1].split(",")
+        if len(parts) < 32:
+            continue
+        try:
+            out[code] = {
+                "date": parts[30], "open": float(parts[1]), "close": float(parts[3]),
+                "high": float(parts[4]), "low": float(parts[5]),
+                "volume": float(parts[8] or 0), "amount": float(parts[9] or 0),
+            }
+        except Exception:
+            continue
+    return out
+
+
+def fetch_csindex_daily(code="000985", start="20180101"):
+    """中证指数公司日线（如中证全指 000985，新浪日线已停更）。"""
+    import requests as _rq
+    import urllib3 as _u3
+    _u3.disable_warnings()
+    sess = _rq.Session()
+    sess.trust_env = False
+    r = sess.get("https://www.csindex.com.cn/csindex-home/perf/index-perf",
+                 params={"indexCode": code, "startDate": start,
+                         "endDate": pd.Timestamp.now().strftime("%Y%m%d")},
+                 headers={"User-Agent": "Mozilla/5.0"}, timeout=40, verify=False)
+    rows = (r.json() or {}).get("data") or []
+    if not rows:
+        return None
+    d = pd.DataFrame(rows)
+    out = pd.DataFrame()
+    out["日期"] = pd.to_datetime(d["tradeDate"].astype(str), format="%Y%m%d",
+                                errors="coerce").dt.strftime("%Y-%m-%d")
+    for src, dst in (("close", "收盘"), ("open", "开盘"), ("high", "最高"),
+                     ("low", "最低"), ("tradingValue", "成交额")):
+        if src in d.columns:
+            out[dst] = pd.to_numeric(d[src], errors="coerce")
+    out = out.dropna(subset=["日期", "收盘"]).sort_values("日期").reset_index(drop=True)
+    print(f"  [OK] 中证指数 {code} 共 {len(out)} 条，最新 {out.iloc[-1]['日期']} {out.iloc[-1]['收盘']:.2f}")
+    return out
+
+
 def fetch_index_daily(symbol, ind_name):
     """获取指数日线数据"""
     try:
@@ -130,6 +224,19 @@ def fetch_index_daily(symbol, ind_name):
                 cols.append(c)
         result = df[cols].copy()
         result.columns = ["日期"] + [c for c in cols[1:]]
+        result["日期"] = pd.to_datetime(result["日期"], errors="coerce").dt.strftime("%Y-%m-%d")
+        # 日线接口当晚可能还没追加当天，用实时报价补齐（盘中为累计值，收盘后为定版）
+        if isinstance(symbol, str) and len(symbol) == 8 and symbol[:2] in ("sh", "sz", "bj"):
+            last = str(result["日期"].dropna().iloc[-1]) if len(result) else ""
+            q = _sina_quote([symbol]).get(symbol)
+            if q and q["date"] and q["date"] > last and q["close"] > 0:
+                row = {"日期": q["date"], "close": q["close"], "open": q["open"],
+                       "high": q["high"], "low": q["low"], "volume": q["volume"]}
+                for c in result.columns:
+                    if c not in row:
+                        row[c] = None
+                result = pd.concat([result, pd.DataFrame([row])], ignore_index=True)
+                print(f"  [INFO] {ind_name} 用实时报价补齐 {q['date']}")
         print(f"  [INFO] 获取 {ind_name} 共 {len(result)} 条日线数据")
         return result
     except Exception as e:
@@ -255,15 +362,17 @@ def fetch_market_breadth():
     """市场宽度：涨跌家数 + 涨跌停数。主源新浪快照，备用东财；非交易日跳过。"""
     print("\n>> 采集: 市场宽度数据")
     now = datetime.now()
-    # 快照在周末仍保留上一交易日收盘状态，日期取最近交易日（以上证指数为准）
+    # 日期规则：交易日开盘后（09:25 起）用当天；周末或开盘前用最近交易日
+    hm = now.hour * 60 + now.minute
     trade_date = now.strftime("%Y-%m-%d")
-    try:
-        _idx = pd.read_csv(os.path.join(DATA_DIR, "sh_index.csv"), usecols=["日期"])
-        trade_date = str(_idx["日期"].dropna().astype(str).iloc[-1])
-    except Exception:
-        if now.weekday() >= 5:
-            print("  [SKIP] 周末且无法确认交易日，跳过市场宽度")
-            return None
+    if now.weekday() >= 5 or hm < 9 * 60 + 25:
+        try:
+            _idx = pd.read_csv(os.path.join(DATA_DIR, "sh_index.csv"), usecols=["日期"])
+            trade_date = str(_idx["日期"].dropna().astype(str).iloc[-1])
+        except Exception:
+            if now.weekday() >= 5:
+                print("  [SKIP] 周末且无法确认交易日，跳过市场宽度")
+                return None
 
     chg = name = code = None
     try:
@@ -467,6 +576,13 @@ def fetch_cap_structure(start="2018-01-01"):
     df = _series("000985")
     if df is None:
         return None
+    # 沪深流通市值（全指点位 × 标定系数），独立保存：覆盖 2018 起，供融资资金跟踪使用
+    _cap = pd.DataFrame({"日期": df["日期"],
+                         "沪深流通市值": (df["close"] * calib["k_all"] / 1e8).round(0)})
+    try:
+        _cap.to_csv(os.path.join(DATA_DIR, "market_cap.csv"), index=False, encoding="utf-8-sig")
+    except Exception:
+        pass
     for nm, (code, k) in parts.items():
         s2 = _series(code)
         if s2 is None or not k:
@@ -502,6 +618,8 @@ def fetch_cap_structure(start="2018-01-01"):
     out["中证1000市值"] = (df["中证1000_mv"] / 1e8).round(0)
     out["中证2000市值"] = (df["中证2000_mv"] / 1e8).round(0)
     out["其他市值"] = (df["其他_mv"] / 1e8).round(0)
+    # 沪深流通市值合计（中证全指口径），供融资资金跟踪使用
+    out["沪深流通市值"] = (df["close"] * calib["k_all"] / 1e8).round(0)
     out["北证50市值"] = (df["北证50_mv"] / 1e8).round(0)
     out["北交所其他市值"] = ((df["北交所_mv"] - df["北证50_mv"]) / 1e8).round(0)
     out = out.dropna().sort_values("日期").reset_index(drop=True)
@@ -510,6 +628,67 @@ def fetch_cap_structure(start="2018-01-01"):
           f"最新 沪深300 {last['沪深300市值占比']}% 中证500 {last['中证500市值占比']}% "
           f"1000 {last['中证1000市值占比']}% 2000 {last['中证2000市值占比']}%")
     return out
+
+
+def fetch_turnover_total(beg="20180101"):
+    """交易所口径两市成交额：上证综指 + 深证综指 的总成交额（亿元）。
+
+    中证全指（000985）会剔除 ST 等样本，导致成交额被低估约 4%；
+    这里直接用两市综指口径，与行情软件展示的"两市成交额"一致。
+    """
+    import requests as _rq
+    import urllib3 as _u3
+    _u3.disable_warnings()
+    sess = _rq.Session()
+    sess.trust_env = False
+    hdr = {"User-Agent": "Mozilla/5.0", "Referer": "https://quote.eastmoney.com/"}
+    frames = []
+    em_ok = True
+    for secid, col in (("1.000001", "沪市成交额"), ("0.399106", "深市成交额")):
+        try:
+            r = sess.get("https://push2his.eastmoney.com/api/qt/stock/kline/get",
+                         params={"secid": secid, "fields1": "f1,f2,f3",
+                                 "fields2": "f51,f56,f57", "klt": "101", "fqt": "1",
+                                 "beg": beg, "end": "20991231"},
+                         headers=hdr, timeout=20, verify=False)
+            klines = (r.json().get("data") or {}).get("klines") or []
+        except Exception:
+            klines = []
+        rows = []
+        for k in klines:
+            p = k.split(",")
+            if len(p) >= 3:
+                try:
+                    rows.append((p[0], round(float(p[2]) / 1e8, 2)))
+                except Exception:
+                    pass
+        if not rows:
+            em_ok = False
+            break
+        frames.append(pd.DataFrame(rows, columns=["日期", col]))
+    if em_ok and len(frames) == 2:
+        df = frames[0].merge(frames[1], on="日期", how="inner")
+    else:
+        # 东财不可用：沿用本地历史，最新一天由新浪实时报价补齐
+        hist = os.path.join(DATA_DIR, "turnover_all.csv")
+        if not os.path.exists(hist):
+            raise RuntimeError("东财与本地历史均不可用")
+        df = pd.read_csv(hist, dtype={"日期": str})[["日期", "沪市成交额", "深市成交额"]]
+
+    # 当天数据一律用新浪实时报价校准（东财日线当晚常滞留在盘中值）
+    q = _sina_quote(["sh000001", "sz399106"])
+    shq, szq = q.get("sh000001"), q.get("sz399106")
+    if shq and szq and shq.get("date") and shq["date"] == szq.get("date") and shq["amount"] > 0:
+        d = shq["date"]
+        row = {"日期": d, "沪市成交额": round(shq["amount"] / 1e8, 2),
+               "深市成交额": round(szq["amount"] / 1e8, 2)}
+        df = df[df["日期"] != d]
+        df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+    df["两市成交额"] = (pd.to_numeric(df["沪市成交额"], errors="coerce")
+                        + pd.to_numeric(df["深市成交额"], errors="coerce")).round(2)
+    df = df.sort_values("日期").reset_index(drop=True)
+    print(f"  [OK] 两市成交额 {len(df)} 条，最新 {df.iloc[-1]['日期']} {df.iloc[-1]['两市成交额']:.0f} 亿元")
+    return df
 
 
 def fetch_crowding_proxy(start="2018-01-01"):
@@ -609,7 +788,17 @@ def fetch_market_crowding():
     """获取全市场成交额前5%个股成交占比（市场拥挤度指标）"""
     print(f"\n>> 采集: 市场拥挤度")
 
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    # 日期规则同市场宽度：交易日开盘后用当天，周末/开盘前用最近交易日
+    _now = datetime.now()
+    _hm = _now.hour * 60 + _now.minute
+    if _now.weekday() >= 5 or _hm < 9 * 60 + 25:
+        try:
+            _idx = pd.read_csv(os.path.join(DATA_DIR, "sh_index.csv"), usecols=["日期"])
+            today_str = str(_idx["日期"].dropna().astype(str).iloc[-1])
+        except Exception:
+            today_str = _now.strftime("%Y-%m-%d")
+    else:
+        today_str = _now.strftime("%Y-%m-%d")
 
     try:
         df = ak.stock_zh_a_spot()
@@ -722,24 +911,55 @@ def _margin_szse_series(dates, workers=4):
             cache = dict(zip(old["日期"], pd.to_numeric(old["深市融资余额"], errors="coerce")))
         except Exception:
             cache = {}
+    # 兜底：金十数据含深市历史（一次请求），每次都并入以补齐缺口
+    if True:
+        try:
+            jm = ak.macro_china_market_margin_sz()
+            if jm is not None and len(jm):
+                jm = jm.rename(columns={"日期": "_d", "融资余额": "_bal"})
+                jm["_d"] = pd.to_datetime(jm["_d"], errors="coerce").dt.strftime("%Y-%m-%d")
+                jm["_bal"] = pd.to_numeric(jm["_bal"], errors="coerce") / 1e8
+                for _, r in jm.dropna(subset=["_d", "_bal"]).iterrows():
+                    if r["_d"] not in cache:
+                        cache[r["_d"]] = float(r["_bal"])
+                print(f"  [INFO] 深市融资余额（金十）补入 {len(jm)} 条")
+        except Exception as e:
+            print(f"  [WARN] 金十深市数据失败 {type(e).__name__}")
+
     todo = [d for d in dates if d not in cache]
-    # 深交所接口对批量请求会限流：每次最多补最近 240 天，且连续失败即停
-    todo = todo[-240:]
+    # 深交所接口对批量请求会限流：每次最多补最近 30 天，且连续失败即停
+    todo = todo[-30:]
     if todo:
         print(f"  [INFO] 深市融资余额待补 {len(todo)} 天（单次上限 240）")
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
+        import requests as _rq
+        import urllib3 as _u3
+        _u3.disable_warnings()
+        _sess = _rq.Session()
+        _sess.trust_env = False       # 绕过本机系统代理，深交所需直连
+        _hdr = {"User-Agent": "Mozilla/5.0",
+                "Referer": "https://www.szse.cn/disclosure/margin/object/index.html"}
+
         def _one(d):
-            try:
-                x = ak.stock_margin_szse(date=d.replace("-", ""))
-                if x is not None and len(x):
-                    return d, float(pd.to_numeric(x.iloc[0]["融资余额"], errors="coerce"))
-            except Exception:
-                pass
+            for _ in range(3):
+                try:
+                    r = _sess.get("https://www.szse.cn/api/report/ShowReport/data",
+                                  params={"SHOWTYPE": "JSON", "CATALOGID": "1837_xxpl",
+                                          "txtDate": d, "tab1PAGENO": "1"},
+                                  headers=_hdr, timeout=20, verify=False)
+                    rows = (r.json() or [{}])[0].get("data") or []
+                    if rows:
+                        v = pd.to_numeric(str(rows[0].get("jrrzye", "")).replace(",", ""), errors="coerce")
+                        if pd.notna(v):
+                            return d, float(v)
+                    return d, None
+                except Exception:
+                    time.sleep(0.6)
             return d, None
 
         done, streak, t0 = 0, 0, time.time()
-        with ThreadPoolExecutor(max_workers=2) as ex:
+        with ThreadPoolExecutor(max_workers=4) as ex:
             futs = [ex.submit(_one, d) for d in todo]
             for f in as_completed(futs):
                 d, v = f.result()
@@ -814,7 +1034,11 @@ def fetch_margin_data():
         try:
             sz = _margin_szse_series(merged["日期"].tolist())
             if sz:
-                merged["沪市融资余额"] = merged["沪深融资余额"]
+                # 旧文件若已有分市场列，必须沿用，否则沪市会被重复累加
+                if "沪市融资余额" in merged.columns:
+                    merged["沪市融资余额"] = merged["沪市融资余额"].fillna(merged["沪深融资余额"])
+                else:
+                    merged["沪市融资余额"] = merged["沪深融资余额"]
                 merged["深市融资余额"] = merged["日期"].map(sz)
                 both = merged.dropna(subset=["深市融资余额"]).copy()
                 if len(both) > 100:
@@ -1000,6 +1224,76 @@ def _fetch_lg_pe_direct(index_code):
     return result
 
 
+def fetch_bj50_valuation():
+    """北证50 估值（自算）：成分股总市值加权，PE = Σ总市值 / Σ(总市值/PE)。
+
+    乐股乐/中证均不覆盖 899050，北交所官网有反爬，故用腾讯行情逐股聚合。
+    输出 data/valuation_899050.csv（日期, PE_TTM, PB），每日追加一行。
+    """
+    print("")
+    print(">> 采集: 北证50 历史估值（成分股自算）")
+    cons_file = os.path.join(DATA_DIR, "bj50_cons.json")
+    cons = None
+    try:
+        if os.path.exists(cons_file):
+            _mtime = datetime.fromtimestamp(os.path.getmtime(cons_file))
+            if _mtime.strftime("%Y-%m-%d") == datetime.now().strftime("%Y-%m-%d"):
+                cons = json.load(open(cons_file, encoding="utf-8"))
+    except Exception:
+        cons = None
+    if not cons:
+        try:
+            d = ak.index_stock_cons(symbol="899050")
+            cons = [str(x) for x in d["品种代码"].tolist()]
+            json.dump(cons, open(cons_file, "w", encoding="utf-8"), ensure_ascii=False)
+        except Exception as e:
+            print(f"  [WARN] 北证50 成分获取失败: {e}")
+            return None
+    if not cons:
+        return None
+
+    import requests as _rq
+    import urllib3 as _u3
+    _u3.disable_warnings()
+    sess = _rq.Session()
+    sess.trust_env = False
+    hdr = {"User-Agent": "Mozilla/5.0"}
+    codes = [f"bj{c}" for c in cons]
+    quotes = {}
+    for i in range(0, len(codes), 50):
+        try:
+            r = sess.get("https://qt.gtimg.cn/q=" + ",".join(codes[i:i + 50]),
+                         headers=hdr, timeout=15, verify=False)
+            for line in r.content.decode("gbk", errors="ignore").strip().splitlines():
+                if '="' not in line:
+                    continue
+                f = line.split('"')[1].split("~")
+                if len(f) < 47:
+                    continue
+                try:
+                    quotes[f[2]] = {"pe": float(f[39]), "pb": float(f[46]),
+                                    "mv": float(f[45]), "mv_f": float(f[44])}
+                except Exception:
+                    pass
+        except Exception:
+            continue
+    if not quotes:
+        print("  [WARN] 北证50 行情获取失败")
+        return None
+
+    sum_mv = sum(q["mv"] for q in quotes.values() if q["mv"] > 0)
+    earn = sum(q["mv"] / q["pe"] for q in quotes.values() if q["pe"] > 0 and q["mv"] > 0)
+    book = sum(q["mv"] / q["pb"] for q in quotes.values() if q["pb"] > 0 and q["mv"] > 0)
+    pe = round(sum_mv / earn, 2) if earn else None
+    pb = round(sum_mv / book, 2) if book else None
+    print(f"  [OK] 北证50 自算 PE={pe} PB={pb}（{len(quotes)}/{len(cons)} 只）")
+    if pe is None:
+        return None
+    today = datetime.now().strftime("%Y-%m-%d")
+    row = pd.DataFrame([{"日期": today, "PE_TTM": pe, "PB": pb}])
+    return row
+
+
 def fetch_index_valuation(index_code, index_name):
     """获取指数历史 PE/PB 及分位数（乐股乐数据源）"""
     print(f"\n>> 采集: {index_name} 历史估值")
@@ -1102,7 +1396,10 @@ def fetch_all():
             symbol = params.get("symbol", "")
 
             try:
-                df = fetch_index_daily(symbol, name)
+                if ind_id == "zzall":
+                    df = fetch_csindex_daily("000985")
+                else:
+                    df = fetch_index_daily(symbol, name)
                 if df is not None and not df.empty:
                     if save_csv(df, ind_id):
                         results["success"].append(ind_id)
@@ -1229,6 +1526,18 @@ def fetch_all():
             print(f"  [ERR] {vname} 估值异常: {e}")
             results["failed"].append(val_id)
 
+    # 北证50（自算，乐股乐/中证未覆盖）
+    try:
+        bj_val = fetch_bj50_valuation()
+        if bj_val is not None and not bj_val.empty:
+            if save_csv(bj_val, "valuation_899050"):
+                results["success"].append("valuation_899050")
+        else:
+            results["failed"].append("valuation_899050")
+    except Exception as e:
+        print(f"  [ERR] 北证50估值异常: {e}")
+        results["failed"].append("valuation_899050")
+
     # ── 7. 行业PE数据 (CSRC分类 → SW行业) ──
     print(f"\n{'='*50}")
     print(f"  [行业PE估值]")
@@ -1270,6 +1579,18 @@ def fetch_all():
     except Exception as e:
         print(f"  [ERR] 小盘成交占比获取失败: {e}")
         results["failed"].append("crowding_proxy")
+
+    # ── 8.6 两市成交额（交易所综指口径）──
+    try:
+        tov_df = fetch_turnover_total()
+        if tov_df is not None and len(tov_df):
+            save_csv(tov_df, "turnover_all")
+            results["success"].append("turnover_all")
+        else:
+            results["failed"].append("turnover_all")
+    except Exception as e:
+        print(f"  [ERR] 两市成交额获取失败: {e}")
+        results["failed"].append("turnover_all")
 
     # ── 8.7 市值结构时序 ──
     try:

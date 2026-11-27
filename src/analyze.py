@@ -253,51 +253,7 @@ def compute_index_volatility(csv_path, halflife=5):
 
 
 # 波动率映射：年化 10% 视为极低波动(100 分)，45% 视为极高波动(0 分)
-VOL_CALM = 10.0
-VOL_PANIC = 45.0
 # 涨跌比因子下限：几何平均下取 1，避免单日极端值把指数直接打到 0
-UD_RATIO_FLOOR = 1
-
-
-def compute_fear_greed_index(margin_change=None, up_down_ratio=None,
-                              volume_deviation=None, volatility=None):
-    """
-    自建恐贪指数：0-100 分数，值越大越贪婪
-    因子标准化后取几何平均；volatility 为年化波动率（%）
-    """
-    factors = []
-
-    # 因子1：融资余额变化（升=贪婪）
-    if margin_change is not None:
-        # -10%到+10% 映射到 0-100
-        score = min(100, max(0, (margin_change + 10) * 5))
-        factors.append(score)
-
-    # 因子2：涨跌比（升=贪婪）
-    if up_down_ratio is not None:
-        # 0.5到3.0 映射到 0-100；下限避免单日极端值一票定调
-        score = min(100, max(0, (up_down_ratio - 0.5) / 2.5 * 100))
-        factors.append(max(UD_RATIO_FLOOR, score))
-
-    # 因子3：成交量偏离（放量=贪婪）
-    if volume_deviation is not None:
-        # -30%到+50% 映射到 0-100
-        score = min(100, max(0, (volume_deviation + 30) / 80 * 100))
-        factors.append(score)
-
-    # 因子4：波动率（高波动=恐惧）
-    if volatility is not None:
-        # 年化 10% 到 45% 映射到 100-0
-        score = min(100, max(0, (VOL_PANIC - volatility) /
-                              (VOL_PANIC - VOL_CALM) * 100))
-        factors.append(score)
-
-    if not factors:
-        return 50
-
-    # 几何平均：任一维度进入极端区间都会显著拉低综合值，避免被其他维度平均掉
-    index = float(np.exp(np.mean(np.log(np.clip(factors, 1, 100)))))
-    return round(index, 1)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -412,11 +368,41 @@ def analyze_index(ind_id, name, cfg, category):
         "20d": change_20d,
     }
 
-    # Time series for frontend (last N days)
-    n_disp = 120
+    # Time series for frontend（大盘页自定义走势图需要长历史，其余由 build 阶段裁剪）
+    n_disp = 3000
     df_tail = df.tail(n_disp)
-    ts_data = [{"date": d.strftime("%Y-%m-%d"), "value": round(float(v), 4)}
-               for d, v in zip(df_tail["_date"], df_tail["_val"])]
+
+    # 成交量/成交额序列（供副图使用）
+    vol_col = None
+    for _c in df.columns:
+        if any(k in str(_c) for k in ("成交量", "volume", "成交额", "amount", "tradingValue")):
+            vol_col = _c
+            break
+
+    # OHLC（供主图K线使用）
+    def _find_col(names):
+        for _c in df.columns:
+            if str(_c) in names:
+                return _c
+        return None
+
+    o_col = _find_col(("开盘", "open"))
+    h_col = _find_col(("最高", "high"))
+    l_col = _find_col(("最低", "low"))
+
+    def _num(x):
+        return round(float(x), 4) if pd.notna(x) else None
+
+    ts_data = []
+    for i, (d, v) in enumerate(zip(df_tail["_date"], df_tail["_val"])):
+        item = {"date": d.strftime("%Y-%m-%d"), "value": round(float(v), 4)}
+        if vol_col is not None:
+            item["vol"] = _num(df_tail[vol_col].iloc[i])
+        if o_col and h_col and l_col:
+            item["open"] = _num(df_tail[o_col].iloc[i])
+            item["high"] = _num(df_tail[h_col].iloc[i])
+            item["low"] = _num(df_tail[l_col].iloc[i])
+        ts_data.append(item)
 
     return {
         "id": ind_id,
@@ -602,9 +588,12 @@ def analyze_market_breadth():
             latest_down = int(down_vals.iloc[-1]) if len(down_vals) > 0 else None
             ratio = round(latest_up / max(latest_down, 1), 4) if latest_up is not None and latest_down and latest_down > 0 else None
 
+            _dcol = "日期" if "日期" in df_ad.columns else df_ad.columns[0]
+            _dlast = str(df_ad[_dcol].iloc[-1])[:10] if len(df_ad) else None
             result["advance_decline"] = {
                 "latest_up": latest_up,
                 "latest_down": latest_down,
+                "latest_date": _dlast,
                 "up_down_ratio": ratio,
                 "up_ma5": round(float(up_vals.tail(5).mean()), 0) if len(up_vals) >= 5 else None,
                 "down_ma5": round(float(down_vals.tail(5).mean()), 0) if len(down_vals) >= 5 else None,
@@ -614,7 +603,61 @@ def analyze_market_breadth():
     return result
 
 
-def analyze_margin_cost(keep=250):
+def analyze_margin_tracking():
+    """融资资金跟踪：融资余额 / 沪深流通市值，及其 20/60 日斜率与折算净买入。"""
+    try:
+        mb = pd.read_csv(os.path.join(DATA_DIR, "margin_balance.csv"), dtype={"日期": str})
+        mc = pd.read_csv(os.path.join(DATA_DIR, "market_cap.csv"), dtype={"日期": str})
+    except Exception:
+        return None
+    key = "沪深融资余额" if "沪深融资余额" in mb.columns else None
+    if not key:
+        return None
+    mb["bal"] = pd.to_numeric(mb[key], errors="coerce")
+    mc["mv"] = pd.to_numeric(mc["沪深流通市值"], errors="coerce")
+    d = mb[["日期", "bal"]].merge(mc[["日期", "mv"]], on="日期").dropna().sort_values("日期")
+    if len(d) < 80:
+        return None
+
+    # 上证指数做对照
+    idx, _, _ = load_csv("sh_index")
+    if idx is not None:
+        ix = pd.DataFrame({"日期": idx["_date"].dt.strftime("%Y-%m-%d"),
+                           "idx": pd.to_numeric(idx["_val"], errors="coerce")})
+        d = d.merge(ix, on="日期", how="left")
+    else:
+        d["idx"] = None
+
+    d["ratio"] = d["bal"] / d["mv"] * 100
+    d["d_bal"] = d["bal"].diff()
+    d["d20"] = d["ratio"].diff(20)
+    d["d60"] = d["ratio"].diff(60)
+    conv = float(d["mv"].iloc[-1]) / 100.0        # 亿元/pp
+
+    def _v(x, n=2):
+        return None if pd.isna(x) else round(float(x), n)
+
+    ts = [{"date": r["日期"], "ratio": _v(r["ratio"], 3), "bal": _v(r["bal"], 0),
+           "mv": _v(r["mv"], 0), "idx": _v(r["idx"], 2),
+           "d_bal": _v(r["d_bal"], 0), "d20": _v(r["d20"], 3), "d60": _v(r["d60"], 3)}
+          for _, r in d.iterrows()]
+
+    last = d.iloc[-1]
+    return {
+        "id": "margin_tracking",
+        "latest_ratio": _v(last["ratio"], 3),
+        "latest_bal": _v(last["bal"], 0),
+        "latest_mv": _v(last["mv"], 0),
+        "latest_idx": _v(last["idx"], 2),
+        "latest_date": str(last["日期"]),
+        "conv_yi_per_pp": round(conv, 1),
+        "net20_yi": round(float(last["d20"]) * conv, 0) if pd.notna(last["d20"]) else None,
+        "net60_yi": round(float(last["d60"]) * conv, 0) if pd.notna(last["d60"]) else None,
+        "ts_data": ts,
+    }
+
+
+def analyze_margin_cost(keep=None):
     """融资盘平均成本：按融资余额变化对指数收盘价做成本累积。
 
     买入（余额增加）按当日价计入成本；卖出（余额减少）不改变平均成本。
@@ -647,7 +690,7 @@ def analyze_margin_cost(keep=250):
     last = d.iloc[-1]
     cur_px = float(last["px"])
     spread = (cur_px / float(last["cost"]) - 1) * 100 if last["cost"] else None
-    tail = d.tail(keep)
+    tail = d if not keep else d.tail(keep)
     # 平仓线估算：融资保证金比例 80% → 初始维持担保比例 180%，平仓线 130%
     # => 可承受跌幅 27.8%，平仓价 ≈ 平均成本 × 0.72
     LIQ = 0.72
@@ -694,7 +737,7 @@ def analyze_margin():
     latest_date = raw["_date"].iloc[-1].strftime("%Y-%m-%d") if len(raw) else None
 
     ts_data = []
-    for i in raw.tail(120).index:
+    for i in raw.index:
         row = {"date": raw.at[i, "_date"].strftime("%Y-%m-%d"),
                "value": round(float(total.iloc[i]), 2)}
         if has_split and pd.notna(sh.iloc[i]):
@@ -1218,7 +1261,7 @@ def latest_trade_date():
 
 
 def analyze_market_summary(results):
-    """市场综述：两市成交额与环比、市值与环比、主要指数、涨跌家数、两融、拥挤度与恐贪。"""
+    """市场综述：两市成交额与环比、市值与环比、主要指数、涨跌家数、两融与拥挤度。"""
     from html import escape
     sents = []
     trade_date = latest_trade_date()
@@ -1226,9 +1269,16 @@ def analyze_market_summary(results):
     # 1) 两市成交额（中证全指口径）
     data_date = ""
     try:
-        pr = pd.read_csv(os.path.join(DATA_DIR, "crowding_proxy.csv"), dtype={"日期": str})
-        pr = pr[pr["日期"].astype(str) <= trade_date]
-        pr["_amt"] = pd.to_numeric(pr["全A成交额"], errors="coerce")
+        # 优先用交易所综指口径（含 ST 等全部个股），缺失时回退中证全指口径
+        _tf = os.path.join(DATA_DIR, "turnover_all.csv")
+        if os.path.exists(_tf):
+            pr = pd.read_csv(_tf, dtype={"日期": str})
+            pr = pr[pr["日期"].astype(str) <= trade_date]
+            pr["_amt"] = pd.to_numeric(pr["两市成交额"], errors="coerce")
+        else:
+            pr = pd.read_csv(os.path.join(DATA_DIR, "crowding_proxy.csv"), dtype={"日期": str})
+            pr = pr[pr["日期"].astype(str) <= trade_date]
+            pr["_amt"] = pd.to_numeric(pr["全A成交额"], errors="coerce")
         pr = pr.dropna(subset=["_amt"]).sort_values("日期")
         if len(pr):
             _d = pd.to_datetime(pr["日期"].iloc[-1], errors="coerce")
@@ -1236,12 +1286,34 @@ def analyze_market_summary(results):
                 data_date = f"{_d.year}年{_d.month}月{_d.day}日"
         if len(pr) >= 2:
             a0, a1 = float(pr["_amt"].iloc[-1]), float(pr["_amt"].iloc[-2])
-            d = a0 - a1
-            pct = d / a1 * 100 if a1 else 0
-            word = "放量" if d >= 0 else "缩量"
-            color = "#ff3d4f" if d >= 0 else "#00e676"
-            sents.append(f"{data_date}沪深两市成交额 <b>{a0:,.0f} 亿元</b>，较上一交易日"
-                         f"<b style='color:{color}'>{word} {abs(d):,.0f} 亿元（{pct:+.1f}%）</b>。")
+            now = datetime.now()
+            intraday = (pr["日期"].iloc[-1] == now.strftime("%Y-%m-%d")
+                        and now.hour * 60 + now.minute < 15 * 60)
+            if intraday:
+                # 盘中：按已交易时长折算全天，再与上一交易日全天比，避免高估放量
+                hm = now.hour * 60 + now.minute
+                if hm <= 11 * 60 + 30:
+                    mins = hm - (9 * 60 + 30)
+                elif hm <= 13 * 60:
+                    mins = 120
+                else:
+                    mins = 120 + (hm - 13 * 60)
+                frac = max(0.05, min(1.0, mins / 240))
+                est = a0 / frac
+                d = est - a1
+                pct = d / a1 * 100 if a1 else 0
+                word = "放量" if d >= 0 else "缩量"
+                color = "#ff3d4f" if d >= 0 else "#00e676"
+                sents.append(f"{data_date}截至 {now:%H:%M} 沪深两市成交额 <b>{a0:,.0f} 亿元</b>（盘中），"
+                             f"按当前进度折算全天约 <b>{est:,.0f} 亿元</b>，较上一交易日全天"
+                             f"<b style='color:{color}'>{word} {abs(d):,.0f} 亿元（{pct:+.1f}%）</b>。")
+            else:
+                d = a0 - a1
+                pct = d / a1 * 100 if a1 else 0
+                word = "放量" if d >= 0 else "缩量"
+                color = "#ff3d4f" if d >= 0 else "#00e676"
+                sents.append(f"{data_date}沪深两市成交额 <b>{a0:,.0f} 亿元</b>，较上一交易日"
+                             f"<b style='color:{color}'>{word} {abs(d):,.0f} 亿元（{pct:+.1f}%）</b>。")
     except Exception:
         pass
 
@@ -1249,8 +1321,8 @@ def analyze_market_summary(results):
     try:
         cp = pd.read_csv(os.path.join(DATA_DIR, "cap_structure.csv"), dtype={"日期": str})
         cp = cp[cp["日期"].astype(str) <= trade_date]
-        cols = [c for c in cp.columns if c.endswith("市值") and c != "其他市值" or c == "其他市值"]
-        cols = [c for c in cp.columns if c.endswith("市值")]
+        # 只累加各层市值，排除新增的合计列，避免重复计算
+        cols = [c for c in cp.columns if c.endswith("市值") and c != "沪深流通市值"]
         cp["_mv"] = cp[cols].apply(pd.to_numeric, errors="coerce").sum(axis=1)
         cp = cp.dropna(subset=["_mv"]).sort_values("日期")
         if len(cp) >= 2:
@@ -1258,7 +1330,9 @@ def analyze_market_summary(results):
             dm = m0 - m1
             word = "扩大" if dm >= 0 else "缩小"
             color = "#ff3d4f" if dm >= 0 else "#00e676"
-            sents.append(f"全市场流通市值 <b>{m0:.2f} 万亿元</b>，较前一日"
+            _mvd = str(cp["日期"].iloc[-1])
+            _mvtag = f"（{_mvd}）" if _mvd and trade_date and _mvd < trade_date else ""
+            sents.append(f"全市场流通市值 <b>{m0:.2f} 万亿元</b>{_mvtag}，较前一日"
                          f"<b style='color:{color}'>{word} {abs(dm):.2f} 万亿元</b>。")
     except Exception:
         pass
@@ -1274,32 +1348,46 @@ def analyze_market_summary(results):
     except Exception:
         pass
 
-    # 4) 涨跌家数与涨跌停
+    # 4) 涨跌家数与涨跌停（与成交额同一基准日，避免盘中值与收盘值混排）
     try:
-        mb = results.get("market_breadth") or {}
-        ad = mb.get("advance_decline") or {}
-        ls = mb.get("limit_stats") or {}
+        def _row_on_or_before(name):
+            fp = os.path.join(DATA_DIR, f"{name}.csv")
+            if not os.path.exists(fp):
+                return None
+            dd = pd.read_csv(fp, dtype={"日期": str})
+            dd = dd[dd["日期"].astype(str) <= trade_date]
+            return dd.iloc[-1] if len(dd) else None
+
+        ad = _row_on_or_before("advance_decline")
+        ls = _row_on_or_before("limit_stats")
         seg = []
-        up, dn = ad.get("latest_up"), ad.get("latest_down")
-        # 涨跌家数需覆盖大部分个股才可信（抓取不完整时会明显偏小）
-        if up is not None and dn is not None and (up + dn) >= 1000:
-            seg.append(f"上涨 <b>{up}</b> 家、下跌 <b>{dn}</b> 家")
-        lu, ld = ls.get("latest_limit_up"), ls.get("latest_limit_down")
-        if lu is not None and ld is not None:
-            seg.append(f"涨停 <b>{lu}</b> 家、跌停 <b>{ld}</b> 家")
+        if ad is not None:
+            up, dn = int(ad.get("上涨家数", 0)), int(ad.get("下跌家数", 0))
+            if up + dn >= 1000:
+                seg.append(f"上涨 <b>{up}</b> 家、下跌 <b>{dn}</b> 家")
+        if ls is not None:
+            lu, ld = ls.get("涨停数量"), ls.get("跌停数量")
+            if pd.notna(lu) and pd.notna(ld):
+                seg.append(f"涨停 <b>{int(lu)}</b> 家、跌停 <b>{int(ld)}</b> 家")
         if seg:
             sents.append("；".join(seg) + "。")
     except Exception:
         pass
 
-    # 5) 两融余额
+    # 5) 两融余额（披露滞后于行情，日期不一致时标注）
     try:
         mb2 = (results.get("sentiment") or {}).get("margin_balance") or {}
         if mb2.get("latest_value") is not None:
             ch = mb2.get("change_5d")
+            _md = str(mb2.get("latest_date") or "")
+            if len(_md) == 8:
+                _md = f"{_md[:4]}-{_md[4:6]}-{_md[6:]}"
+            _tag = f"{_md}，" if _md and trade_date and _md < trade_date else ""
             txt = f"两融余额 <b>{mb2['latest_value']:,.0f} 亿元</b>"
             if ch is not None:
-                txt += f"（5 日 {ch:+.1f}%）"
+                txt += f"（{_tag}5 日 {ch:+.1f}%）"
+            elif _tag:
+                txt += f"（{_tag.rstrip('，')}）"
             sents.append(txt + "。")
     except Exception:
         pass
@@ -1310,26 +1398,42 @@ def analyze_market_summary(results):
         cost, idx, spread = mc.get("latest_cost"), mc.get("latest_index"), mc.get("spread_pct")
         if cost is not None and idx is not None and spread is not None:
             color = "#00e676" if spread < 0 else "#ff3d4f"
+            _cd = str(mc.get("latest_date") or "")
+            if len(_cd) == 8:
+                _cd = f"{_cd[:4]}-{_cd[4:6]}-{_cd[6:]}"
+            _ctag = f"，{_cd}" if _cd and trade_date and _cd < trade_date else ""
             sents.append(f"融资成本线点位 <b>{cost:,.0f} 点</b>（上证 <b>{idx:,.0f}</b>，"
-                         f"乖离率 <b style='color:{color}'>{spread:+.2f}%</b>）。")
+                         f"乖离率 <b style='color:{color}'>{spread:+.2f}%</b>{_ctag}）。")
     except Exception:
         pass
 
-    # 6) 拥挤度与恐贪（拥挤度仅在与最近交易日同日时采用）
+    # 5.2 中证800 相对 250/200 日均线乖离率
+    try:
+        zp = os.path.join(DATA_DIR, "zz800.csv")
+        if os.path.exists(zp):
+            zdf = pd.read_csv(zp, dtype={"日期": str})
+            ccol = "close" if "close" in zdf.columns else ("收盘" if "收盘" in zdf.columns else zdf.columns[1])
+            zclose = pd.to_numeric(zdf[ccol], errors="coerce").dropna()
+            if len(zclose) >= 200:
+                cur = float(zclose.iloc[-1])
+                seg = []
+                for n in (250, 200):
+                    if len(zclose) >= n:
+                        ma = float(zclose.tail(n).mean())
+                        seg.append(f"相对 {n} 日线乖离率 <b>{((cur - ma) / ma * 100):+.2f}%</b>")
+                if seg:
+                    sents.append(f"中证800 <b>{cur:,.0f}</b>（" + "，".join(seg) + "）。")
+    except Exception:
+        pass
+
+    # 6) 拥挤度（仅在与最近交易日同日时采用）
     try:
         cr_info = results.get("market_crowding") or {}
         cr = cr_info.get("latest_crowding")
         if cr_info.get("latest_date") != trade_date:
             cr = None
-        fg = results.get("fear_greed_index")
-        seg = []
         if cr is not None:
-            seg.append(f"市场拥挤度 <b>{cr:.1f}%</b>")
-        if fg is not None:
-            lab = "极度恐惧" if fg < 25 else "恐惧" if fg < 45 else "中性" if fg <= 55 else "贪婪" if fg <= 75 else "极度贪婪"
-            seg.append(f"恐贪指数 <b>{fg}</b>（{lab}）")
-        if seg:
-            sents.append("，".join(seg) + "。")
+            sents.append(f"市场拥挤度 <b>{cr:.1f}%</b>。")
     except Exception:
         pass
 
@@ -1353,7 +1457,6 @@ def run_analysis():
         "volume": {},
         "sentiment": {},
         "etf_valuation": [],
-        "fear_greed_index": None,
     }
 
     # ── 1. 大盘指数 ──
@@ -1393,6 +1496,15 @@ def run_analysis():
     # Sort industry by latest change_1d
     results["industry_indices"].sort(key=lambda x: x.get("change_1d") or 0, reverse=True)
 
+    # ── 申万行业三级树（一级→二级→三级下钻）──
+    try:
+        swf = os.path.join(DATA_DIR, "sw_tree.json")
+        if os.path.exists(swf):
+            with open(swf, "r", encoding="utf-8") as f:
+                results["sw_tree"] = json.load(f)
+    except Exception as e:
+        print(f"  [WARN] 行业树加载失败: {e}")
+
     # ── 合并行业PE估值到行业指数 ──
     industry_pe_file = os.path.join(DATA_DIR, "industry_pe.csv")
     if os.path.exists(industry_pe_file):
@@ -1425,37 +1537,11 @@ def run_analysis():
     mcost = analyze_margin_cost()
     if mcost:
         results["sentiment"]["margin_cost"] = mcost
-
-    # ── 8. 恐贪指数 ──
-    print("  计算: 恐贪指数...")
-    mb = results["market_breadth"]
-    mr = margin
-
-    # Extract factors
-    margin_chg = mr.get("change_5d", 0) if mr else None
-    up_down = mb.get("up_down_ratio") if mb else None
-
-    # Volume deviation: use sh_index volume if available
-    vol_dev = None
-    vol_data = results.get("volume", {})
-    if vol_data:
-        for k in ["sh_index", "sz_index"]:
-            if k in vol_data and vol_data[k].get("change_5d"):
-                vol_dev = vol_data[k]["change_5d"]
-                break
-
-    # Volatility: 中证800 EWMA 年化波动（半衰期 5 日）
-    volatility = compute_index_volatility(os.path.join(DATA_DIR, "zz800.csv"))
-    if volatility is None:
-        print("  [WARN] zz800.csv 数据不足，波动率因子跳过")
-
-    fear_greed = compute_fear_greed_index(
-        margin_change=margin_chg,
-        up_down_ratio=up_down,
-        volume_deviation=vol_dev,
-        volatility=volatility,
-    )
-    results["fear_greed_index"] = fear_greed
+    mtrack = analyze_margin_tracking()
+    if mtrack:
+        results["sentiment"]["margin_tracking"] = mtrack
+        print(f"    融资资金跟踪: 占比 {mtrack['latest_ratio']}%，20日 {mtrack['net20_yi']:+,.0f} 亿，"
+              f"60日 {mtrack['net60_yi']:+,.0f} 亿")
 
     # ── 8.5 市场拥挤度 ──
     crowding_file = os.path.join(DATA_DIR, "market_crowding.csv")
@@ -1590,6 +1676,7 @@ def run_analysis():
         except Exception as e:
             print(f"    [WARN] 市值结构读取失败: {e}")
 
+
     # ── 9. ETF 估值 ──
     print("  分析: 宽基估值...")
     # Also look for valuation CSV files
@@ -1608,6 +1695,7 @@ def run_analysis():
         "valuation_399006": "创业板指估值",
         "valuation_000688": "科创50估值",
         "valuation_399303": "国证2000估值",
+        "valuation_899050": "北证50估值",
     }
     for val_file in sorted(val_files):
         val_id = val_file.replace(".csv", "")
@@ -1617,6 +1705,21 @@ def run_analysis():
             results["etf_valuation"].append(entry)
             print(f"    [OK] {val_name}: PE={entry['pe_ttm']} (分位{entry['pe_pct_5y']}%)")
 
+    # ── 估值汇总排序与占位（按宽基一览顺序；无数据源的先占位）──
+    _pref = ["中证A500估值", "中证800估值", "上证50估值", "沪深300估值", "中证500估值",
+             "中证1000估值", "中证2000估值", "创业板指估值", "科创50估值",
+             "北证50估值", "国证1000估值", "国证2000估值"]
+    _have = {v["name"] for v in results.get("etf_valuation", [])}
+    for _nm in _pref:
+        if _nm not in _have:
+            results["etf_valuation"].append({
+                "id": _nm, "name": _nm, "pe_ttm": None, "pe_pct_5y": None,
+                "pe_pct_10y": None, "pe_pct_all": None, "pe_level": None,
+                "pb": None, "pb_pct_all": None, "pb_level": None, "ts_data": [],
+            })
+    _order = {n: i for i, n in enumerate(_pref)}
+    results["etf_valuation"].sort(key=lambda v: _order.get(v["name"], 999))
+
     # ── 合并宽基PE估值到宽基指数（必须在ETF估值生成后执行）──
     broad_pe_map = {
         "hs300": "valuation_000300", "sz50": "valuation_000016",
@@ -1625,7 +1728,6 @@ def run_analysis():
         "chinext_broad": "valuation_399006",
         "zz2000": "valuation_000932",
         "gz2000": "valuation_399303",
-        "microcap": "valuation_399303",
         "zz500": "valuation_000905", "zz1000": "valuation_000852",
         "star50_index": "valuation_000688", "zz2000": "valuation_000932",
     }
@@ -1657,6 +1759,69 @@ def run_analysis():
         results["market_summary"] = analyze_market_summary(results)
     except Exception as e:
         print(f"    [WARN] 市场综述生成失败: {e}")
+
+    # ── 数据新鲜度自检 ──
+    try:
+        def _last_date(fname):
+            fp = os.path.join(DATA_DIR, fname)
+            if not os.path.exists(fp):
+                return None
+            dd = pd.read_csv(fp, dtype=str)
+            col = "日期" if "日期" in dd.columns else ("date" if "date" in dd.columns else dd.columns[0])
+            vals = dd[col].dropna().astype(str)
+            if not len(vals):
+                return None
+            v = vals.iloc[-1][:10]
+            return f"{v[:4]}-{v[4:6]}-{v[6:8]}" if len(v) == 8 else v
+
+        td = (results.get("market_summary") or {}).get("date") or latest_trade_date()
+        prev = None
+        try:
+            sh = pd.read_csv(os.path.join(DATA_DIR, "sh_index.csv"), dtype={"日期": str})
+            dates = sorted(sh["日期"].dropna().astype(str).unique())
+            if td in dates:
+                i = dates.index(td)
+                prev = dates[i - 1] if i > 0 else None
+        except Exception:
+            pass
+
+        fresh = []
+        for name, f, allow in (("指数", "sh_index.csv", 0), ("成交额", "turnover_all.csv", 0),
+                               ("涨跌家数", "advance_decline.csv", 0),
+                               ("拥挤度", "market_crowding.csv", 0),
+                               ("流通市值", "cap_structure.csv", 1),
+                               ("两融", "margin_balance.csv", 1),
+                               ("ETF份额", "nfgj_hs300.csv", 1),
+                               ("估值", "valuation_000300.csv", 1)):
+            d = _last_date(f)
+            if not d:
+                status = "missing"
+            elif d >= td:
+                status = "ok"
+            elif allow and prev and d >= prev:
+                status = "ok"
+            else:
+                status = "lag"
+            fresh.append({"name": name, "date": d, "status": status})
+        results["freshness"] = fresh
+    except Exception:
+        pass
+
+    # ── 盘中标记 ──
+    try:
+        import json as _json
+        mf = os.path.join(DATA_DIR, "intraday.json")
+        if os.path.exists(mf):
+            mk = _json.load(open(mf, encoding="utf-8"))
+            now = datetime.now()
+            results["intraday"] = {
+                "active": (mk.get("date") == now.strftime("%Y-%m-%d")
+                           and now.hour * 60 + now.minute < 15 * 60 + 5),
+                "time": mk.get("time"),
+                "date": mk.get("date"),
+            }
+    except Exception:
+        pass
 
     # ── Save ──
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -1692,7 +1857,6 @@ def run_analysis():
     print(f"\n  分析结果已保存至: {ANALYSIS_OUTPUT}")
     print(f"  大盘指数: {len(results['major_indices'])} | 宽基: {len(results['broad_indices'])} | "
           f"风格: {len(results['style_indices'])} | 行业: {len(results['industry_indices'])}")
-    print(f"  恐贪指数: {results['fear_greed_index']}")
 
     return results
 

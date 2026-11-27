@@ -23,16 +23,14 @@ def build():
     for key in ["major_indices", "broad_indices", "style_indices", "industry_indices"]:
         for ind in data.get(key, []):
             ts = ind.get("ts_data", [])
-            if len(ts) > 60:
-                ind["ts_data"] = ts[-60:]
+            keep = 3000 if key in ("major_indices", "broad_indices") else 60   # 自定义走势图需要长历史
+            if len(ts) > keep:
+                ind["ts_data"] = ts[-keep:]
     for entry in data.get("etf_valuation", []):
         ts = entry.get("ts_data", [])
         if len(ts) > 120:
             entry["ts_data"] = ts[-120:]
-    if "sentiment" in data and "margin_balance" in data["sentiment"]:
-        ts = data["sentiment"]["margin_balance"].get("ts_data", [])
-        if len(ts) > 120:
-            data["sentiment"]["margin_balance"]["ts_data"] = ts[-120:]
+    # 情绪页有时区间选择器，融资余额保留全历史（由前端按区间裁剪）
 
     with open(TRIM_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False)

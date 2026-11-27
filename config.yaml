@@ -49,19 +49,17 @@ indicators:
       akshare_func: stock_zh_index_daily
       akshare_params: { symbol: bj899050 }
 
-  # ── 宽基指数 (10) ──────────────────────────────────
-  broad_indices:
-    - id: hs300
-      name: 沪深300
+    - id: zzall
+      name: 中证全指
       unit: 点
       source: 中证指数公司
       frequency: 每日
-      description: 大盘蓝筹代表指数
-      akshare_func: stock_zh_index_daily
-      akshare_params: { symbol: sh000300 }
-      etf_code: "510300"
-      etf_name: 华泰柏瑞沪深300ETF
+      description: 沪深两市全部A股综合指数
+      akshare_func: csindex_daily
+      akshare_params: { code: "000985" }
 
+  # ── 宽基指数 (13) ──────────────────────────────────
+  broad_indices:
     - id: a500
       name: 中证A500
       unit: 点
@@ -81,6 +79,28 @@ indicators:
       description: 大中盘代表指数(沪深300+中证500)
       akshare_func: stock_zh_index_daily
       akshare_params: { symbol: sh000906 }
+
+    - id: sz50
+      name: 上证50
+      unit: 点
+      source: 上交所
+      frequency: 每日
+      description: 沪市超级大盘代表
+      akshare_func: stock_zh_index_daily
+      akshare_params: { symbol: sh000016 }
+      etf_code: "510050"
+      etf_name: 华夏上证50ETF
+
+    - id: hs300
+      name: 沪深300
+      unit: 点
+      source: 中证指数公司
+      frequency: 每日
+      description: 大盘蓝筹代表指数
+      akshare_func: stock_zh_index_daily
+      akshare_params: { symbol: sh000300 }
+      etf_code: "510300"
+      etf_name: 华泰柏瑞沪深300ETF
 
     - id: zz500
       name: 中证500
@@ -115,16 +135,47 @@ indicators:
       etf_code: "563300"
       etf_name: 华泰柏瑞中证2000ETF
 
-    - id: sz50
-      name: 上证50
+    - id: chinext_broad
+      name: 创业板指数
+      unit: 点
+      source: 深交所
+      frequency: 每日
+      description: 创业板宽基指数(全收益)
+      akshare_func: stock_zh_index_daily
+      akshare_params: { symbol: sz399006 }
+      etf_code: "159915"
+      etf_name: 易方达创业板ETF
+
+    - id: star50_index
+      name: 科创50
       unit: 点
       source: 上交所
       frequency: 每日
-      description: 沪市超级大盘代表
+      description: 科创板宽基指数
       akshare_func: stock_zh_index_daily
-      akshare_params: { symbol: sh000016 }
-      etf_code: "510050"
-      etf_name: 华夏上证50ETF
+      akshare_params: { symbol: sh000688 }
+      etf_code: "588000"
+      etf_name: 华夏上证科创板50ETF
+
+    - id: bj50_index
+      name: 北证50
+      unit: 点
+      source: 北交所
+      frequency: 每日
+      description: 北交所宽基指数
+      akshare_func: stock_zh_index_daily
+      akshare_params: { symbol: bj899050 }
+
+
+  # ── 风格指数 (6) ──────────────────────────────────
+    - id: gz1000
+      name: 国证1000
+      unit: 点
+      source: 深交所
+      frequency: 每日
+      description: 国证大中盘宽基指数
+      akshare_func: stock_zh_index_daily
+      akshare_params: { symbol: sz399311 }
 
     - id: gz2000
       name: 国证2000
@@ -137,29 +188,16 @@ indicators:
       etf_code: "159628"
       etf_name: 万家国证2000ETF
 
-    - id: chinext_broad
-      name: 创业板指数
+    - id: zzall
+      name: 中证全指
       unit: 点
-      source: 深交所
+      source: 中证指数公司
       frequency: 每日
-      description: 创业板宽基指数(全收益)
-      akshare_func: stock_zh_index_daily
-      akshare_params: { symbol: sz399006 }
-      etf_code: "159915"
-      etf_name: 易方达创业板ETF
+      description: 沪深两市全部A股综合指数
+      akshare_func: csindex_daily
+      akshare_params: { code: "000985" }
 
-    - id: microcap
-      name: 微盘股指数
-      unit: 点
-      source: 万得
-      frequency: 每日
-      description: 万得微盘股指数(国证2000代理)
-      akshare_func: stock_zh_index_daily
-      akshare_params: { symbol: sz399303 }
-      etf_code: "159655"
-      etf_name: 华夏中证2000ETF(替代)
 
-  # ── 风格指数 (6) ──────────────────────────────────
   style_indices:
     - id: lg_value
       name: 大盘价值

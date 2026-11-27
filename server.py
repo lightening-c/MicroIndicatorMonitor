@@ -96,6 +96,7 @@ def run_update():
         # 采集步骤涉及 70+ 个接口/5000+ 只股票，耗时远大于分析步骤，单独给足超时
         steps = [
             ("采集数据", "fetch_data.py", 1800),
+            ("行业树", "fetch_sw_tree.py", 900),
             ("ETF资金", "fetch_nfgj.py", 900),
             ("分析引擎", "analyze.py", 600),
             ("构建页面", "build_dashboard.py", 120),
@@ -194,6 +195,138 @@ def _evening_recheck_loop():
                             log("[RECHECK] 已补到当日份额")
         except Exception as e:
             log(f"[RECHECK] 异常 {type(e).__name__}: {e}")
+        time.sleep(60)
+
+
+MARGIN_CSV = os.path.join(DATA_DIR, "margin_balance.csv")
+MARGIN_TIMES = [(21, 10), (22, 10), (23, 10)]
+
+
+def _last_margin_date():
+    try:
+        with open(MARGIN_CSV, "r", encoding="utf-8-sig") as f:
+            lines = f.read().strip().splitlines()
+        return lines[-1].split(",")[0].replace("-", "") if len(lines) > 1 else None
+    except Exception:
+        return None
+
+
+def _margin_recheck_loop():
+    """交易所通常 21:00 后才披露当日两融：当晚按 21:10/22:10/23:10 补采一次。"""
+    done = set()
+    time.sleep(30)
+    while True:
+        try:
+            now = datetime.now()
+            today = now.strftime("%Y%m%d")
+            if now.weekday() < 5:
+                for hh, mm in MARGIN_TIMES:
+                    key = (today, hh, mm)
+                    if now.hour * 60 + now.minute >= hh * 60 + mm and key not in done:
+                        if (_last_margin_date() or "") >= today:
+                            done.add(key)
+                            log(f"[MARGIN] {hh:02d}:{mm:02d} 已有当日两融")
+                            continue
+                        if STATUS["running"]:
+                            continue
+                        done.add(key)
+                        log(f"[MARGIN] {hh:02d}:{mm:02d} 当日两融缺失，自动补采")
+                        STATUS["running"] = True
+                        try:
+                            STATUS["step"] = "融资余额"
+                            ok, _ = _run_step("融资余额", "sync_margin.py", 600)
+                            log(f"[MARGIN] 融资余额: {'OK' if ok else 'FAILED'}")
+                        finally:
+                            STATUS["running"] = False
+                            STATUS["step"] = None
+        except Exception as e:
+            log(f"[MARGIN] 异常 {type(e).__name__}: {e}")
+        time.sleep(60)
+
+
+def _intraday_loop():
+    """盘中每 15 分钟轻量同步（指数/宽度/拥挤度），15:05 触发一次收盘定版更新。"""
+    time.sleep(15)
+    last_sync = 0.0
+    closed_done = None
+    closed_checks = set()
+    while True:
+        try:
+            now = datetime.now()
+            hm = now.hour * 60 + now.minute
+            today = now.strftime("%Y%m%d")
+            trading = now.weekday() < 5
+            in_session = trading and ((9 * 60 + 35 <= hm <= 11 * 60 + 30)
+                                      or (13 * 60 <= hm <= 14 * 60 + 58))
+            if in_session and not STATUS["running"] and time.time() - last_sync >= 900:
+                last_sync = time.time()
+                STATUS["running"] = True
+                STATUS["step"] = "盘中同步"
+                try:
+                    ok, _ = _run_step("盘中同步", "sync_intraday.py", 420)
+                    log(f"[INTRADAY] {'OK' if ok else 'FAILED'}")
+                finally:
+                    STATUS["running"] = False
+                    STATUS["step"] = None
+            if (trading and 15 * 60 + 5 <= hm <= 15 * 60 + 40
+                    and closed_done != today and not STATUS["running"]):
+                closed_done = today
+                log("[CLOSE] 收盘定版更新")
+                run_update()
+            # 收盘后再校验数次，避免日线接口当晚仍停留在盘中值
+            for hh, mm in ((15, 25), (15, 45), (16, 5)):
+                key = (today, hh, mm)
+                if (trading and hh * 60 + mm <= hm <= hh * 60 + mm + 20
+                        and key not in closed_checks
+                        and not STATUS["running"]):
+                    closed_checks.add(key)
+                    log(f"[CLOSE] {hh:02d}:{mm:02d} 收盘数据校验")
+                    STATUS["running"] = True
+                    STATUS["step"] = "收盘校验"
+                    try:
+                        ok, _ = _run_step("收盘校验", "sync_intraday.py", 420)
+                        log(f"[CLOSE] 校验 {'OK' if ok else 'FAILED'}")
+                    finally:
+                        STATUS["running"] = False
+                        STATUS["step"] = None
+        except Exception as e:
+            log(f"[INTRADAY] 异常 {type(e).__name__}: {e}")
+        time.sleep(60)
+
+
+def _morning_catchup_loop():
+    """次日 08:40 兜底：昨晚没到的估值/份额/两融/市值，开盘前补齐。"""
+    time.sleep(40)
+    done = set()
+    while True:
+        try:
+            now = datetime.now()
+            today = now.strftime("%Y%m%d")
+            if now.weekday() < 5 and (8, 40) not in done and now.hour * 60 + now.minute >= 8 * 60 + 40:
+                done.add((8, 40))
+                # 昨日数据是否已齐（以上一交易日为基准）
+                missing = []
+                for f, name in (("valuation_000300.csv", "估值"), ("nfgj_hs300.csv", "ETF份额"),
+                                ("margin_balance.csv", "两融"), ("cap_structure.csv", "市值")):
+                    p = os.path.join(DATA_DIR, f)
+                    if not os.path.exists(p):
+                        missing.append(name)
+                        continue
+                    try:
+                        with open(p, "r", encoding="utf-8-sig") as fh:
+                            lines = fh.read().strip().splitlines()
+                        last = lines[-1].split(",")[0].replace("-", "") if len(lines) > 1 else ""
+                        if last < today:
+                            missing.append(f"{name}({last})")
+                    except Exception:
+                        missing.append(name)
+                if missing and not STATUS["running"]:
+                    log(f"[MORNING] 数据缺失 {missing}，自动补采")
+                    run_update()
+                else:
+                    log("[MORNING] 数据齐备，跳过补采")
+        except Exception as e:
+            log(f"[MORNING] 异常 {type(e).__name__}: {e}")
         time.sleep(60)
 
 
@@ -297,6 +430,9 @@ def main():
     server = http.server.ThreadingHTTPServer(("0.0.0.0", port), APIHandler)
     log(f"服务器启动 http://localhost:{port} (python={PYTHON})")
     start_realtime_thread()
+    threading.Thread(target=_intraday_loop, daemon=True).start()
+    threading.Thread(target=_margin_recheck_loop, daemon=True).start()
+    threading.Thread(target=_morning_catchup_loop, daemon=True).start()
     threading.Thread(target=_evening_recheck_loop, daemon=True).start()
     print(f"\n{'='*60}")
     print(f"  微观指标跟踪服务器")
