@@ -129,9 +129,9 @@ indicators:
       unit: 点
       source: 中证指数公司
       frequency: 每日
-      description: 微盘代表指数
-      akshare_func: stock_zh_index_daily
-      akshare_params: { symbol: sh000932 }
+      description: 小微盘代表指数
+      akshare_func: csindex_daily
+      akshare_params: { code: "932000", start: "20131231" }
       etf_code: "563300"
       etf_name: 华泰柏瑞中证2000ETF
 

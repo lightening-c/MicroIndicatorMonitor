@@ -203,10 +203,16 @@ body::after {
 .sw-item:hover{background:rgba(255,255,255,0.05)}
 .sw-item.on{background:rgba(0,229,255,0.12);color:var(--accent)}
 .sw-meta{font-size:11px;color:var(--dim);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tab-fresh{margin:0 0 14px;padding:10px 14px;border:1px solid var(--border);border-radius:10px;background:var(--panel)}
-.tab-fresh-text{display:flex;justify-content:space-between;gap:12px;font-size:12px;color:var(--dim);margin-bottom:6px}
-.tab-fresh-track{height:6px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden}
-.tab-fresh-fill{height:100%;border-radius:3px;transition:width .3s}
+.tab-fresh{margin:0 0 14px;padding:10px 14px;border:1px solid var(--border);border-radius:10px;background:linear-gradient(180deg,rgba(255,255,255,0.04),rgba(0,0,0,0.18)),var(--panel);box-shadow:inset 0 1px 0 rgba(255,255,255,0.05)}
+.tab-fresh-text{display:flex;justify-content:space-between;gap:12px;font-size:12px;color:var(--dim);margin-bottom:7px}
+.tab-fresh-text span:last-child{font-weight:700;letter-spacing:.3px;text-shadow:0 0 10px currentColor}
+.tab-fresh-track{position:relative;height:14px;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:linear-gradient(180deg,#0a1015,#05080b);box-shadow:inset 0 2px 6px rgba(0,0,0,0.8),0 1px 0 rgba(255,255,255,0.06)}
+.tab-fresh-fill{position:relative;height:100%;width:0;border-radius:7px;background:linear-gradient(180deg,rgba(255,255,255,0.6),rgba(255,255,255,0) 48%),var(--bar-color);box-shadow:0 0 12px var(--bar-color),inset 0 1px 0 rgba(255,255,255,0.5),inset 0 -3px 5px rgba(0,0,0,0.35);transition:width .7s cubic-bezier(.2,.8,.2,1)}
+.tab-fresh-fill::before{content:'';position:absolute;top:0;bottom:0;left:-46px;width:40px;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.65),transparent);animation:barShine 2.4s ease-in-out infinite}
+.tab-fresh-fill::after{content:'';position:absolute;inset:0;background:repeating-linear-gradient(115deg,rgba(255,255,255,0.2) 0 7px,rgba(255,255,255,0) 7px 17px);animation:barStripes 1.1s linear infinite;opacity:.65}
+@keyframes barStripes{from{background-position:0 0}to{background-position:34px 0}}
+@keyframes barShine{0%{left:-46px}55%,100%{left:calc(100% + 46px)}}
+@media (prefers-reduced-motion:reduce){.tab-fresh-fill::before,.tab-fresh-fill::after{animation:none}}
 .overview-grid { display:grid; grid-template-columns:280px 1fr 1fr; gap:16px; margin-bottom:16px; }
 .overview-grid .chart-panel { height:var(--kpi-h,120px); min-height:var(--kpi-h,120px); padding:8px 14px; overflow:hidden;
   display:flex; flex-direction:column; justify-content:center; }
@@ -433,9 +439,10 @@ function renderTabFreshness(){
   const el=document.createElement('div');
   el.className='tab-fresh';
   el.title=parts;
-  el.innerHTML=`<div class="tab-fresh-text"><span>数据更新进度</span><span style="color:${color}">${text}</span></div><div class="tab-fresh-track"><div class="tab-fresh-fill" style="width:${pct}%;background:${color}"></div></div>`;
+  el.innerHTML=`<div class="tab-fresh-text"><span>数据更新进度</span><span style="color:${color}">${text}</span></div><div class="tab-fresh-track"><div class="tab-fresh-fill" style="--bar-color:${color}"></div></div>`;
   const c=document.getElementById('tabContent');
   if(c) c.insertBefore(el,c.firstChild);
+  requestAnimationFrame(()=>{const f=el.querySelector('.tab-fresh-fill'); if(f) f.style.width=pct+'%';});
 }
 
 function initAllCharts(){

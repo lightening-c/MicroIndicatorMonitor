@@ -1396,8 +1396,9 @@ def fetch_all():
             symbol = params.get("symbol", "")
 
             try:
-                if ind_id == "zzall":
-                    df = fetch_csindex_daily("000985")
+                if ind.get("akshare_func") == "csindex_daily":
+                    df = fetch_csindex_daily(params.get("code", "000985"),
+                                             params.get("start", "20180101"))
                 else:
                     df = fetch_index_daily(symbol, name)
                 if df is not None and not df.empty:
