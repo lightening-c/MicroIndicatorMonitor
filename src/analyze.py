@@ -1804,6 +1804,65 @@ def run_analysis():
                 status = "lag"
             fresh.append({"name": name, "date": d, "status": status})
         results["freshness"] = fresh
+
+        def _iso(s):
+            if not s:
+                return None
+            s = str(s)
+            if len(s) == 8 and s.isdigit():
+                return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
+            return s[:10]
+
+        def _part(name, date, allow=False):
+            date = _iso(date)
+            if not date:
+                status = "missing"
+            elif date >= td:
+                status = "ok"
+            elif allow and prev and date >= prev:
+                status = "ok"
+            else:
+                status = "lag"
+            return {"name": name, "date": date, "status": status}
+
+        def _latest(items):
+            ds = [x.get("latest_date") for x in items if x.get("latest_date")]
+            return max(ds) if ds else None
+
+        fmap = {x["name"]: x for x in fresh}
+        nfgj_items = (results.get("nfgj") or {}).get("items") or []
+        nfgj_dates = [_iso((x.get("latest") or {}).get("date")) for x in nfgj_items]
+        nfgj_latest = max([d for d in nfgj_dates if d], default=None)
+        tabs = [
+            {"key": "overview", "label": "市场总览",
+             "parts": [fmap[n] for n in ("指数", "成交额", "涨跌家数", "拥挤度", "流通市值", "两融") if n in fmap]},
+            {"key": "broad", "label": "宽基指数",
+             "parts": [_part("宽基指数", _latest(results.get("broad_indices") or []))]},
+            {"key": "style", "label": "风格指数",
+             "parts": [_part("风格指数", _latest(results.get("style_indices") or []))]},
+            {"key": "industry", "label": "行业指数",
+             "parts": [_part("行业指数", _latest(results.get("industry_indices") or [])),
+                       _part("申万分类树", (results.get("sw_tree") or {}).get("trade_date"))]},
+            {"key": "sentiment", "label": "情绪与资金",
+             "parts": [p for p in (fmap.get("两融"),
+                                   _part("融资成本", (results.get("sentiment") or {}).get("margin_cost", {}).get("latest_date"), True),
+                                   fmap.get("拥挤度")) if p]},
+            {"key": "valuation", "label": "宽基估值分位数",
+             "parts": [fmap["估值"]] if "估值" in fmap else []},
+            {"key": "nfgj", "label": "ETF 资金跟踪",
+             "parts": [_part("ETF份额", fmap.get("ETF份额", {}).get("date")), _part("资金跟踪", nfgj_latest)]},
+        ]
+        tab_status = []
+        for t in tabs:
+            parts = t["parts"]
+            dates = [p["date"] for p in parts if p.get("date")]
+            tab_status.append({
+                "key": t["key"], "label": t["label"],
+                "latest": max(dates) if dates else td,
+                "ok": sum(1 for p in parts if p.get("status") == "ok"),
+                "total": len(parts), "parts": parts,
+            })
+        results["tab_freshness"] = {"trade_date": td, "tabs": tab_status}
     except Exception:
         pass
 
