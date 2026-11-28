@@ -358,6 +358,28 @@ def _breadth_em():
     return chg, name, code
 
 
+def _stock_board(c):
+    if c.startswith(("688", "689")):
+        return "科创板"
+    if c.startswith(("300", "301")):
+        return "创业板"
+    if c.startswith(("8", "4", "92")):
+        return "北交所"
+    if c.startswith("6"):
+        return "沪主板"
+    if c.startswith("0"):
+        return "深主板"
+    return "其他"
+
+
+def _load_sw_map():
+    try:
+        with open(os.path.join(DATA_DIR, "sw_stock_map.json"), "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
 def fetch_market_breadth():
     """市场宽度：涨跌家数 + 涨跌停数。主源新浪快照，备用东财；非交易日跳过。"""
     print("\n>> 采集: 市场宽度数据")
@@ -395,6 +417,9 @@ def fetch_market_breadth():
     if chg is None:
         return None
 
+    if chg is not None:
+        code = code.astype(str).str[-6:].str.zfill(6)
+
     valid = chg.notna()
     up = int((chg[valid] > 0).sum())
     down = int((chg[valid] < 0).sum())
@@ -410,6 +435,26 @@ def fetch_market_breadth():
     lim[name.str.contains("ST", na=False)] = 4.8
     limit_up = int((chg >= lim - 0.15).sum())
     limit_down = int((chg <= -(lim - 0.15)).sum())
+
+    # 涨跌停明细（含名称、代码、申万三级行业/板块）
+    swmap = _load_sw_map()
+
+    def _detail(i):
+        c = str(code.loc[i])
+        info = swmap.get(c) or {}
+        return {"code": c, "name": str(name.loc[i]),
+                "board": _stock_board(c),
+                "industry": info.get("l3") or info.get("l2") or _stock_board(c),
+                "chg": round(float(chg.loc[i]), 2)}
+
+    try:
+        detail = {"date": trade_date,
+                  "up": [_detail(i) for i in chg.index[chg >= lim - 0.15]],
+                  "down": [_detail(i) for i in chg.index[chg <= -(lim - 0.15)]]}
+        with open(os.path.join(DATA_DIR, "limit_details.json"), "w", encoding="utf-8") as f:
+            json.dump(detail, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"  [WARN] 涨跌停明细写入失败: {type(e).__name__} {e}")
 
     today = trade_date
     print(f"  [INFO] 全市场 {int(valid.sum())} 只（{src}），涨{up} 跌{down} 平{flat}，"

@@ -213,6 +213,18 @@ def main():
         x["n_children"] = 0
 
     total_stocks = sum(x["n_stocks"] or 0 for x in l3)
+    l2_by_name = {x["name"]: x for x in l2}
+    stock_map = {}
+    for x in l3:
+        codes = cons.get(x["code"]) or []
+        l2_name = x.get("parent")
+        l1_name = (l2_by_name.get(l2_name) or {}).get("parent")
+        for c in codes:
+            stock_map.setdefault(c, {"l3": x["name"], "l2": l2_name, "l1": l1_name})
+    with open(os.path.join(DATA_DIR, "sw_stock_map.json"), "w", encoding="utf-8") as f:
+        json.dump(stock_map, f, ensure_ascii=False)
+    _log(f"个股行业映射: {len(stock_map)} 只")
+
     payload = {
         "updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "trade_date": _trade_date(),

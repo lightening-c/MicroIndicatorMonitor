@@ -561,6 +561,7 @@ def analyze_market_breadth():
         "limit_stats": None,
         "advance_decline": None,
         "up_down_ratio": None,
+        "limit_details": None,
     }
 
     # Limit up/down stats
@@ -599,6 +600,12 @@ def analyze_market_breadth():
                 "down_ma5": round(float(down_vals.tail(5).mean()), 0) if len(down_vals) >= 5 else None,
             }
             result["up_down_ratio"] = ratio
+
+    try:
+        with open(os.path.join(DATA_DIR, "limit_details.json"), "r", encoding="utf-8") as f:
+            result["limit_details"] = json.load(f)
+    except Exception:
+        pass
 
     return result
 

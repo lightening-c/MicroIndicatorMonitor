@@ -213,6 +213,16 @@ body::after {
 @keyframes barStripes{from{background-position:0 0}to{background-position:34px 0}}
 @keyframes barShine{0%{left:-46px}55%,100%{left:calc(100% + 46px)}}
 @media (prefers-reduced-motion:reduce){.tab-fresh-fill::before,.tab-fresh-fill::after{animation:none}}
+.limit-modal{position:fixed;inset:0;z-index:9999;display:none;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,0.62)}
+.limit-modal-box{width:min(680px,94vw);max-height:82vh;display:flex;flex-direction:column;border:1px solid var(--border);border-radius:12px;background:var(--panel);box-shadow:0 24px 70px rgba(0,0,0,0.65);overflow:hidden}
+.limit-modal-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border);font-weight:700}
+.limit-modal-body{overflow:auto;padding:4px 14px 14px}
+.limit-table{width:100%;border-collapse:collapse;font-size:13px}
+.limit-table th,.limit-table td{padding:7px 8px;border-bottom:1px solid var(--border);text-align:left}
+.limit-table th{position:sticky;top:0;background:var(--panel);color:var(--dim);font-weight:500}
+.limit-stat-btn{cursor:pointer;padding:6px 16px;border:1px solid transparent;border-radius:10px;transition:background .16s ease,border-color .16s ease,transform .16s ease,box-shadow .16s ease}
+.limit-stat-btn:hover{background:rgba(255,255,255,0.05);border-color:var(--border);transform:translateY(-1px);box-shadow:0 4px 14px rgba(0,0,0,0.35)}
+.limit-stat-btn:active{transform:translateY(0)}
 .overview-grid { display:grid; grid-template-columns:280px 1fr 1fr; gap:16px; margin-bottom:16px; }
 .overview-grid .chart-panel { height:var(--kpi-h,120px); min-height:var(--kpi-h,120px); padding:8px 14px; overflow:hidden;
   display:flex; flex-direction:column; justify-content:center; }
@@ -444,6 +454,21 @@ function renderTabFreshness(){
   if(c) c.insertBefore(el,c.firstChild);
   requestAnimationFrame(()=>{const f=el.querySelector('.tab-fresh-fill'); if(f) f.style.width=pct+'%';});
 }
+
+function showLimitDetail(kind){
+  const d=(DATA.market_breadth||{}).limit_details||{};
+  const rows=(kind==='up'?d.up:d.down)||[];
+  const title=kind==='up'?'涨停明细':'跌停明细';
+  const body=rows.length
+    ?`<table class="limit-table"><thead><tr><th>名称</th><th>代码</th><th>板块</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${r.name}</td><td>${r.code}</td><td>${r.industry||r.board||'--'}</td></tr>`).join('')}</tbody></table>`
+    :'<div style="padding:24px;color:var(--dim)">暂无明细数据，请重新采集市场宽度</div>';
+  let m=document.getElementById('limitModal');
+  if(!m){m=document.createElement('div');m.id='limitModal';m.className='limit-modal';document.body.appendChild(m);}
+  m.innerHTML=`<div class="limit-modal-box"><div class="limit-modal-head"><span>${title}（${rows.length}）<span style="font-size:12px;color:var(--dim);margin-left:8px">${d.date||''}</span></span><button class="rule-btn" onclick="closeLimitDetail()">关闭</button></div><div class="limit-modal-body">${body}</div></div>`;
+  m.style.display='flex';
+  m.onclick=e=>{if(e.target===m) closeLimitDetail();};
+}
+function closeLimitDetail(){const m=document.getElementById('limitModal'); if(m) m.style.display='none';}
 
 function initAllCharts(){
   if(!DATA) return;
@@ -815,7 +840,7 @@ function renderMarketOverview(){
   html+=`<div class="chart-panel" style="align-items:center;justify-content:center;display:flex;flex-direction:column"><div class="chart-title">市场拥挤度</div><div style="font-size:34px;font-family:Orbitron;font-weight:700;color:${crowdOv>40?'var(--red)':crowdOv>30?'var(--orange)':'var(--green)'}">${crowdOv!=null?crowdOv.toFixed(1)+'%':'--'}</div><div style="font-size:12px;color:var(--c-axis);margin-top:2px">前5%个股成交占比</div></div>`;
 
   const ls=mb.limit_stats||{};
-  html+=`<div class="chart-panel"><div class="chart-title">涨跌停板统计</div><div style="display:flex;gap:28px;align-items:center;padding:4px;justify-content:center;flex:1"><div style="text-align:center"><div style="color:var(--up);font-size:30px;font-family:Orbitron">${ls.latest_limit_up??'--'}</div><div style="color:var(--text);font-size:13px">涨停板</div><div style="font-size:11px;color:var(--c-axis)">5日均 ${ls.limit_up_ma5??'--'}</div></div><div style="text-align:center"><div style="color:var(--down);font-size:30px;font-family:Orbitron">${ls.latest_limit_down??'--'}</div><div style="color:var(--text);font-size:13px">跌停板</div><div style="font-size:11px;color:var(--c-axis)">5日均 ${ls.limit_down_ma5??'--'}</div></div></div></div>`;
+  html+=`<div class="chart-panel"><div class="chart-title">涨跌停板统计</div><div style="display:flex;gap:20px;align-items:center;justify-content:center;flex:1"><div class="limit-stat-btn" onclick="showLimitDetail('up')" title="点击查看涨停明细" style="text-align:center"><div style="color:var(--up);font-size:30px;font-family:Orbitron">${ls.latest_limit_up??'--'}</div><div style="color:var(--text);font-size:13px">涨停板</div><div style="font-size:11px;color:var(--c-axis)">5日均 ${ls.limit_up_ma5??'--'}</div></div><div class="limit-stat-btn" onclick="showLimitDetail('down')" title="点击查看跌停明细" style="text-align:center"><div style="color:var(--down);font-size:30px;font-family:Orbitron">${ls.latest_limit_down??'--'}</div><div style="color:var(--text);font-size:13px">跌停板</div><div style="font-size:11px;color:var(--c-axis)">5日均 ${ls.limit_down_ma5??'--'}</div></div></div></div>`;
 
   const ad=mb.advance_decline||{};
   html+=`<div class="chart-panel"><div class="chart-title">涨跌家数</div><div style="display:flex;gap:24px;align-items:center;padding:4px;justify-content:center;flex:1"><div style="text-align:center"><div style="color:var(--up);font-size:24px;font-family:Orbitron">${ad.latest_up??'--'}</div><div style="color:var(--text);font-size:12px">上涨家数</div></div><div style="text-align:center"><div style="color:var(--down);font-size:24px;font-family:Orbitron">${ad.latest_down??'--'}</div><div style="color:var(--text);font-size:12px">下跌家数</div></div><div style="text-align:center"><div style="font-size:14px;color:var(--text)">涨跌比</div><div style="font-size:20px;font-family:Orbitron;color:${(ad.up_down_ratio||0)>=1?'var(--up)':'var(--down)'}">${ad.up_down_ratio!=null?ad.up_down_ratio.toFixed(2):'--'}</div></div></div></div>`;
