@@ -179,6 +179,251 @@ def _sina_quote(codes):
     return out
 
 
+def fetch_weipan_cons(limit=400):
+    """微盘400成分股：沪深 A 股按总市值升序取前 400（剔除 ST/退市/停牌）。
+
+    输出 data/weipan_cons.json，供看板「成分股」弹窗使用。
+    """
+    import requests as _rq
+    import urllib3 as _u3
+    _u3.disable_warnings()
+    sess = _rq.Session()
+    sess.trust_env = False
+    hdr = {"User-Agent": "Mozilla/5.0", "Referer": "https://quote.eastmoney.com/"}
+    fs = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048"
+    rows = []
+    for pn in range(1, 80):
+        try:
+            r = sess.get("https://push2.eastmoney.com/api/qt/clist/get",
+                         params={"pn": pn, "pz": 100, "po": 0, "np": 1,
+                                 "fltt": 2, "invt": 2, "fid": "f20", "fs": fs,
+                                 "fields": "f12,f14,f2,f3,f6,f8,f20,f100"},
+                         headers=hdr, timeout=15, verify=False)
+            items = ((r.json() or {}).get("data") or {}).get("diff") or []
+        except Exception:
+            break
+        if not items:
+            break
+        for x in items:
+            rows.append(x)
+    valid = []
+    st_list = []
+    for x in rows:
+        try:
+            name = str(x.get("f14") or "")
+            price = float(x.get("f2"))
+            chg = float(x.get("f3"))
+            mv = float(x.get("f20"))
+            if any(k in name.upper() for k in ("ST", "退", "PT", "N ")):
+                # ST/退市风险股单独留存，供看板「ST板块」按钮使用
+                if price > 0 and "退" not in name:
+                    st_list.append({
+                        "code": str(x.get("f12")), "name": name,
+                        "industry": str(x.get("f100") or ""),
+                        "price": round(price, 2), "chg": round(chg, 2),
+                        "amount_yi": round(float(x.get("f6") or 0) / 1e8, 2),
+                        "turnover": round(float(x.get("f8") or 0), 2),
+                        "mv_yi": round(mv / 1e8, 1),
+                        "is_star": name.upper().startswith("*ST"),
+                    })
+                continue
+            if price <= 0 or mv <= 0:
+                continue
+            valid.append({
+                "code": str(x.get("f12")),
+                "name": name,
+                "industry": str(x.get("f100") or ""),
+                "price": round(price, 2),
+                "chg": round(chg, 2),
+                "amount_yi": round(float(x.get("f6") or 0) / 1e8, 2),
+                "turnover": round(float(x.get("f8") or 0), 2),
+                "mv_yi": round(mv / 1e8, 1),
+            })
+        except Exception:
+            continue
+    valid.sort(key=lambda z: z["mv_yi"])
+    # 微盘400 仅限沪深（排除北交所代码）
+    ranked = [z for z in valid if not z["code"].startswith(("8", "4", "92"))]
+    rank_of = {z["code"]: i + 1 for i, z in enumerate(ranked)}
+    raw_by_code = {}
+    for x in rows:
+        raw_by_code[str(x.get("f12", ""))] = str(x.get("f14") or "")
+    picked = ranked[:limit]
+    if not picked:
+        print("  [WARN] 微盘400 成分获取失败")
+        return None
+
+    # 标记与中证2000 重合的成分（供看板高亮）
+    zz2000_codes = set()
+    try:
+        zdf = ak.index_stock_cons(symbol="932000")
+        zz2000_codes = {str(c).split(".")[0].zfill(6) for c in zdf["品种代码"]}
+    except Exception as e:
+        print(f"  [WARN] 中证2000 成分获取失败: {e}")
+    for z in ranked:
+        z["in_zz2000"] = z["code"] in zz2000_codes
+    n_dup = sum(1 for z in picked if z["in_zz2000"])
+    print(f"  [INFO] 与中证2000 重合 {n_dup} 只")
+    trade_date = ""
+    try:
+        d = pd.read_csv(os.path.join(DATA_DIR, "sh_index.csv"), usecols=["日期"], dtype={"日期": str})
+        trade_date = str(d["日期"].max())
+    except Exception:
+        pass
+    payload = {"date": trade_date, "list": picked}
+    with open(os.path.join(DATA_DIR, "weipan_cons.json"), "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False)
+    print(f"  [OK] 微盘400 成分 {len(picked)} 只，最新市值 {picked[-1]['mv_yi']:.1f} 亿，日期 {trade_date}")
+
+    # ── ST 板块快照 ──
+    try:
+        st_payload = {"date": trade_date, "list": sorted(st_list, key=lambda z: z["chg"], reverse=True)}
+        with open(os.path.join(DATA_DIR, "st_board.json"), "w", encoding="utf-8") as f:
+            json.dump(st_payload, f, ensure_ascii=False)
+        print(f"  [OK] ST板块 {len(st_list)} 只已保存")
+    except Exception as e:
+        print(f"  [WARN] ST板块保存失败: {e}")
+
+    # ── 当日调仓：与上一交易日快照对比 ──
+    try:
+        hist_file = os.path.join(DATA_DIR, "weipan_cons_history.json")
+        hist = {}
+        if os.path.exists(hist_file):
+            try:
+                hist = json.load(open(hist_file, encoding="utf-8"))
+            except Exception:
+                hist = {}
+        prev_date = None
+        for d in sorted(hist.keys()):
+            if d < trade_date:
+                prev_date = d
+        today_codes = [z["code"] for z in picked]
+        if prev_date:
+            prev_codes = set(hist[prev_date])
+            today_set = set(today_codes)
+            added_codes = [c for c in today_codes if c not in prev_codes]
+            removed_codes = [c for c in hist[prev_date] if c not in today_set]
+            by_code = {z["code"]: z for z in ranked}
+
+            def _row(code, direction):
+                z = by_code.get(code)
+                if z:
+                    base = {"code": code, "name": z["name"], "industry": z["industry"],
+                            "price": z["price"], "chg": z["chg"], "mv_yi": z["mv_yi"],
+                            "rank": rank_of.get(code), "in_zz2000": bool(z.get("in_zz2000"))}
+                else:
+                    base = {"code": code, "name": raw_by_code.get(code, code),
+                            "industry": "", "price": None, "chg": None,
+                            "mv_yi": None, "rank": None}
+                if direction == "add":
+                    base["reason"] = f"市值排名第 {base['rank']}，进入前 400" if base["rank"] else "重新纳入样本"
+                else:
+                    if base["rank"]:
+                        base["reason"] = f"市值排名第 {base['rank']}，跌出前 400"
+                    elif code in raw_by_code:
+                        base["reason"] = "停牌/ST/无报价，退出样本"
+                    else:
+                        base["reason"] = "退出沪深 A 股样本"
+                return base
+
+            changes = {"date": trade_date, "prev_date": prev_date,
+                       "added": [_row(c, "add") for c in added_codes],
+                       "removed": [_row(c, "del") for c in removed_codes]}
+            with open(os.path.join(DATA_DIR, "weipan_changes.json"), "w", encoding="utf-8") as f:
+                json.dump(changes, f, ensure_ascii=False)
+            print(f"  [OK] 当日调仓：新进 {len(added_codes)} / 剔除 {len(removed_codes)}（对比 {prev_date}）")
+        else:
+            with open(os.path.join(DATA_DIR, "weipan_changes.json"), "w", encoding="utf-8") as f:
+                json.dump({"date": trade_date, "prev_date": None, "added": [], "removed": [],
+                           "note": "首次记录成分，暂无可对比的上一交易日"}, f, ensure_ascii=False)
+            print("  [INFO] 首次记录微盘400 成分，暂无调仓对比")
+        hist[trade_date] = today_codes
+        keep_days = sorted(hist.keys())[-60:]
+        hist = {d: hist[d] for d in keep_days}
+        with open(hist_file, "w", encoding="utf-8") as f:
+            json.dump(hist, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"  [WARN] 当日调仓计算失败: {e}")
+
+    # 科创50 / 北证50：按官方成分名单筛选同一快照
+    by_code = {z["code"]: z for z in valid}
+    for idx_code, out_name, label in (("000688", "star50_cons.json", "科创50"),
+                                      ("899050", "bj50_cons_stocks.json", "北证50")):
+        try:
+            cons = ak.index_stock_cons(symbol=idx_code)
+            codes = [str(c).split(".")[0].zfill(6) for c in cons["品种代码"]]
+            lst = [by_code[c] for c in codes if c in by_code]
+            out = {"date": trade_date, "list": lst}
+            with open(os.path.join(DATA_DIR, out_name), "w", encoding="utf-8") as f:
+                json.dump(out, f, ensure_ascii=False)
+            print(f"  [OK] {label} 成分 {len(lst)}/{len(codes)} 只已保存")
+        except Exception as e:
+            print(f"  [WARN] {label} 成分失败: {e}")
+    return payload
+
+
+def fetch_ths_index(ths_code="48_883418", start_year=2023):
+    """同花顺指数日线（883418 = 微盘股，400 只日调仓等权）。
+
+    年线接口格式：日期,开,高,低,收,成交量,成交额,...
+    """
+    import requests as _rq
+    import urllib3 as _u3
+    _u3.disable_warnings()
+    sess = _rq.Session()
+    sess.trust_env = False
+    hdr = {"User-Agent": "Mozilla/5.0", "Referer": "http://q.10jqka.com.cn/"}
+
+    rows = []
+    for y in range(start_year, datetime.now().year + 1):
+        try:
+            r = sess.get(f"http://d.10jqka.com.cn/v6/line/{ths_code}/01/{y}.js",
+                         headers=hdr, timeout=15, verify=False)
+            txt = r.content.decode("utf-8", errors="ignore")
+            j = json.loads(txt[txt.index("(") + 1:txt.rindex(")")])
+            data = j.get("data") or ""
+            for rec in data.split(";"):
+                q = rec.split(",")
+                if len(q) < 7 or not q[0].strip():
+                    continue
+                rows.append({
+                    "日期": q[0],
+                    "开盘": float(q[1]),
+                    "最高": float(q[2]),
+                    "最低": float(q[3]),
+                    "收盘": float(q[4]),
+                    "成交量": float(q[5]),
+                    "成交额": float(q[6]) if q[6] else None,
+                })
+        except Exception:
+            continue
+    # 当天（可能盘中）数据在 last.js 中，年线文件收盘后才补齐
+    try:
+        r = sess.get(f"http://d.10jqka.com.cn/v6/line/{ths_code}/01/last.js",
+                     headers=hdr, timeout=15, verify=False)
+        txt = r.content.decode("utf-8", errors="ignore")
+        j = json.loads(txt[txt.index("(") + 1:txt.rindex(")")])
+        for rec in (j.get("data") or "").split(";"):
+            q = rec.split(",")
+            if len(q) < 7 or not q[0].strip():
+                continue
+            rows.append({
+                "日期": q[0],
+                "开盘": float(q[1]), "最高": float(q[2]), "最低": float(q[3]),
+                "收盘": float(q[4]), "成交量": float(q[5]),
+                "成交额": float(q[6]) if q[6] else None,
+            })
+    except Exception:
+        pass
+
+    if not rows:
+        print("  [WARN] 同花顺指数无数据")
+        return None
+    df = pd.DataFrame(rows).drop_duplicates(subset=["日期"], keep="last").sort_values("日期").reset_index(drop=True)
+    print(f"  [OK] 同花顺 {ths_code} 共 {len(df)} 条，最新 {df.iloc[-1]['日期']} {df.iloc[-1]['收盘']:.2f}")
+    return df
+
+
 def fetch_csindex_daily(code="000985", start="20180101"):
     """中证指数公司日线（如中证全指 000985，新浪日线已停更）。"""
     import requests as _rq
@@ -1482,7 +1727,9 @@ def fetch_all():
             symbol = params.get("symbol", "")
 
             try:
-                if ind.get("akshare_func") == "csindex_daily":
+                if ind.get("akshare_func") == "ths_index_daily":
+                    df = fetch_ths_index(params.get("code", "48_883418"))
+                elif ind.get("akshare_func") == "csindex_daily":
                     df = fetch_csindex_daily(params.get("code", "000985"),
                                              params.get("start", "20180101"))
                 else:
@@ -1678,6 +1925,17 @@ def fetch_all():
     except Exception as e:
         print(f"  [ERR] 两市成交额获取失败: {e}")
         results["failed"].append("turnover_all")
+
+    # ── 8.65 微盘400 成分股 ──
+    try:
+        wp = fetch_weipan_cons()
+        if wp:
+            results["success"].append("weipan_cons")
+        else:
+            results["failed"].append("weipan_cons")
+    except Exception as e:
+        print(f"  [ERR] 微盘400 成分失败: {e}")
+        results["failed"].append("weipan_cons")
 
     # ── 8.7 市值结构时序 ──
     try:

@@ -49,6 +49,15 @@ indicators:
       akshare_func: stock_zh_index_daily
       akshare_params: { symbol: bj899050 }
 
+    - id: weipan400
+      name: 极致微盘400等权
+      unit: 点
+      source: 同花顺(iFinD 883418)
+      frequency: 每日
+      description: 沪深市值最小400只等权，日调仓
+      akshare_func: ths_index_daily
+      akshare_params: { code: "48_883418" }
+
     - id: zzall
       name: 中证全指
       unit: 点
@@ -58,7 +67,7 @@ indicators:
       akshare_func: csindex_daily
       akshare_params: { code: "000985" }
 
-  # ── 宽基指数 (13) ──────────────────────────────────
+  # ── 宽基指数 (14) ──────────────────────────────────
   broad_indices:
     - id: a500
       name: 中证A500
@@ -134,6 +143,15 @@ indicators:
       akshare_params: { code: "932000", start: "20131231" }
       etf_code: "563300"
       etf_name: 华泰柏瑞中证2000ETF
+
+    - id: weipan400
+      name: 极致微盘400等权
+      unit: 点
+      source: 同花顺(iFinD 883418)
+      frequency: 每日
+      description: 沪深市值最小400只等权，日调仓
+      akshare_func: ths_index_daily
+      akshare_params: { code: "48_883418" }
 
     - id: chinext_broad
       name: 创业板指数

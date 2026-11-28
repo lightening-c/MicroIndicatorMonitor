@@ -32,10 +32,18 @@ def main():
     ok, fail = 0, 0
     for ind in groups:
         try:
-            sym = (ind.get("akshare_params") or {}).get("symbol")
-            if not sym:
-                continue
-            df = fd.fetch_index_daily(sym, ind["name"])
+            fn = ind.get("akshare_func")
+            params = ind.get("akshare_params") or {}
+            if fn == "csindex_daily":
+                df = fd.fetch_csindex_daily(params.get("code", "000985"),
+                                            params.get("start", "20180101"))
+            elif fn == "ths_index_daily":
+                df = fd.fetch_ths_index(params.get("code", "48_883418"))
+            else:
+                sym = params.get("symbol")
+                if not sym:
+                    continue
+                df = fd.fetch_index_daily(sym, ind["name"])
             if df is not None and len(df):
                 fd.save_csv(df, ind["id"])
                 ok += 1
