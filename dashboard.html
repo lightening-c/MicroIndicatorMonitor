@@ -727,7 +727,7 @@ function showMarketInsight(){
   if(idxChg!=null&&med!=null){
     const gap=med-idxChg;
     if(idxChg>0.5&&med<=0){ core='权重抱团：指数上涨但多数个股下跌，宽基指数被少数权重拉动——不宜追高，需提高对冲严谨度'; coreTone='var(--down)'; }
-    else if(idxChg>0.5&&med>0.3&&upPct!=null&&upPct>60){ core='普涨：市值加权与个股广度双好，Beta 环境舒适'; coreTone='var(--up)'; }
+    else if(idxChg>0.5&&med>0.3&&upPct!=null&&upPct>60){ core='三档同步向上、且等权高于市值加权——小盘强于权重，属普涨格局；市值加权涨幅最低，说明指数并非由权重股拉动'; coreTone='var(--up)'; }
     else if(Math.abs(idxChg)<=0.5&&med>0.3){ core='个股独立扩散：指数横盘而中位数明显为正，Alpha 环境友好，增强/中性更容易出超额'; coreTone='var(--up)'; }
     else if(idxChg<-0.5&&med<0){ core='系统性杀跌：流动性收缩，优先降杠杆、控制对冲成本与尾部风险'; coreTone='var(--down)'; }
     else { core=`结构分化：中位数 ${med.toFixed(2)}% vs 中证全指 ${idxChg.toFixed(2)}%（差值 ${gap.toFixed(2)}pp），方向不明确`; }
@@ -739,7 +739,7 @@ function showMarketInsight(){
     const bw=upPct>60?'普涨':upPct>=40?'分化':'普跌';
     let combo='';
     if(med!=null){
-      if(med>0&&upPct>60) combo='中位数为正 + 广度>60%，高质量普涨，赚钱效应扎实';
+      if(med>0&&upPct>60) combo='上涨家数占比>60%、中位数为正，广度与个股收益同向';
       else if(med>0&&upPct>=40) combo='中位数为正但广度一般，涨幅集中在强势小票，行情偏题材';
       else if(med<0&&upPct<40) combo='中位数为负 + 广度<40%，亏钱效应扩散';
       else if(med>=0&&upPct<40) combo='中位数小幅为正但广度极低，典型的极端抱团（少数票大涨、大量小票下跌），中性策略最需警惕';
@@ -763,7 +763,7 @@ function showMarketInsight(){
   if(hi20P!=null){
     const midPulse=(zzChg!=null&&zzChg>0.5&&hi20P<10);
     if(midPulse) sustainTxt=`创20日新高占比仅 ${pct(hi20P)}，指数上涨但新高很少，更像脉冲行情，持续性差`;
-    else if(hi20P>=15) sustainTxt=`创20日新高占比 ${pct(hi20P)}、60日新高 ${pct(hi60P)}，赚钱效应在扩散（20D 灵敏、60D 确认中期趋势）`;
+    else if(hi20P>=15) sustainTxt=`创20日新高占比 ${pct(hi20P)}、60日新高 ${pct(hi60P)}，新高面处于中上水平；单日读数不足以证明趋势，需看后续 3–5 日是否继续抬升（20D 灵敏、60D 确认中期）`;
     else sustainTxt=`创20日新高占比 ${pct(hi20P)}、60日新高 ${pct(hi60P)}，扩散程度中等`;
   }
 
@@ -792,7 +792,7 @@ function showMarketInsight(){
     let _ewTxt='';
     if(b5.ew_ret!=null&&idxChg!=null){
       const _eg=b5.ew_ret-idxChg;
-      _ewTxt=`全A等权收益 ${b5.ew_ret>0?'+':''}${b5.ew_ret.toFixed(2)}% vs 中证全指 ${idxChg>0?'+':''}${idxChg.toFixed(2)}%（差 ${Math.abs(_eg).toFixed(2)}pp）——同口径（均覆盖全部A股）下${Math.abs(_eg)<1?'大小盘风格均衡':_eg>0?'<b style="color:var(--up)">小票占优</b>':'<b style="color:var(--down)">权重占优</b>'}`;
+      _ewTxt=`全A等权指数涨幅 ${b5.ew_ret>0?'+':''}${b5.ew_ret.toFixed(2)}% vs 中证全指 ${idxChg>0?'+':''}${idxChg.toFixed(2)}%（差 ${Math.abs(_eg).toFixed(2)}pp）——同口径（均覆盖全部A股）下${Math.abs(_eg)<1?'大小盘风格均衡':_eg>0?'<b style="color:var(--up)">小票占优</b>':'<b style="color:var(--down)">权重占优</b>'}`;
     }
     avgTxt=`加权 ${avg.toFixed(2)} 元 · 平均 ${avgS!=null?avgS.toFixed(2):'--'} 元（算术口径，仅参考）`
       + `<br/><b style="color:var(--accent)">风格判定</b>：${_gapTxt}`
@@ -804,10 +804,10 @@ function showMarketInsight(){
   let ztTxt='';
   if(zb.rate!=null){
     const resealRatio=zb.zt_total?resealN/zb.zt_total*100:null;
-    ztTxt=`涨停 ${zb.zt_total} 家、炸板 ${zb.zb_total} 家（炸板率 ${pct(zb.rate)}），涨停中 ${resealN} 家回封（${pct(resealRatio)}）。`;
+    ztTxt=`涨停 ${zb.zt_total} 家、炸板 ${zb.zb_total} 家（炸板率 ${pct(zb.rate)}），涨停中 ${resealN} 家回封（${pct(resealRatio)}）——东财池口径，不含北交所。`;
     if(zb.rate<=10) ztTxt+='炸板率低，题材情绪较强。';
     else if(zb.rate>=20) ztTxt+='炸板率偏高，打板资金亏钱效应明显。';
-    if(resealRatio!=null&&resealRatio>60) ztTxt+='回封占比高，盘中换手剧烈。';
+    if(resealRatio!=null&&resealRatio>60) ztTxt+='回封占比高，说明盘中反复开合、封板质量参差（也可能反映承接较强，需结合次日溢价判断）。';
   }
 
   // ── 7. PSY ──
@@ -846,7 +846,7 @@ function showMarketInsight(){
 
   const body=`
     <div style="font-size:18px;line-height:2">
-      <div><b style="color:var(--accent)">① 核心体感（中位数 vs 中证全指）</b><br/>赚钱效应 <b style="color:${_earnColor}">${_earn}</b>：个股中位数 涨幅<b>${med!=null?med.toFixed(2)+'%':'--'}</b>，中证全指 涨幅<b>${idxChg!=null?idxChg.toFixed(2)+'%':'--'}</b>${zzChg!=null?`（中证2000 涨幅 ${zzChg.toFixed(2)}%）`:''}。<span style="color:${coreTone}">${core||'--'}</span></div>
+      <div><b style="color:var(--accent)">① 核心体感（中位数 vs 市值加权）</b><br/>赚钱效应 <b style="color:${_earnColor}">${_earn}</b>：个股中位数 涨幅<b>${med!=null?med.toFixed(2)+'%':'--'}</b>、全A等权指数 涨幅<b>${b5.ew_ret!=null?b5.ew_ret.toFixed(2)+'%':'--'}</b>、中证全指 涨幅<b>${idxChg!=null?idxChg.toFixed(2)+'%':'--'}</b>。<br/>${core||'--'}</div>
       <div style="margin-top:8px"><b style="color:var(--accent)">② 广度</b><br/>${breadthTxt||'--'}</div>
       <div style="margin-top:8px"><b style="color:var(--accent)">③ 强度（涨跌幅区间）</b><br/>${strengthTxt||'--'}<br/><span style="color:var(--dim);font-size:14.5px">&gt;5% ${pct(p5)}｜2~5% ${pct(p2_5)}｜0~2% ${pct(p0_2)}｜-2~0 ${pct(m2_0)}｜-5~-2 ${pct(m5_m2)}｜&lt;-5% ${pct(lt5)}</span></div>
       <div style="margin-top:8px"><b style="color:var(--accent)">④ 持续性（新高占比）</b><br/>${sustainTxt||'--'}</div>
@@ -855,7 +855,7 @@ function showMarketInsight(){
       <div style="margin-top:8px"><b style="color:var(--accent)">⑦ PSY</b><br/>${psyTxt||'--'}</div>
       ${histBlock}
       <div style="margin-top:12px;padding:10px 12px;border:1px solid var(--accent);border-radius:8px;background:rgba(0,229,255,0.06)"><b style="color:var(--accent)">情景对照</b><br/>${scenTxt}</div>
-      <div style="margin-top:12px;font-size:13.5px;color:var(--dim);line-height:1.8">口径：中位数为全A涨跌幅中位数；广度含北交所快照；区间分布与≥5%同源；新高来自同花顺排行；平均股价为流通市值加权均价（对齐通达信 880003），剔除北交所；炸板/回封取东财涨停池。<br/>单日指标易被突发扰动欺骗，建议结合连续 3–5 日的序列（中位数、新高占比是否持续抬升）再下结论。</div>
+      <div style="margin-top:12px;font-size:13.5px;color:var(--dim);line-height:1.8">口径：中位数为全A涨跌幅中位数；广度含北交所快照；区间分布与≥5%同源；新高来自同花顺排行；平均股价为流通市值加权均价（对齐通达信 880003），剔除北交所；涨停/炸板/回封取东财涨停池（不含北交所）；跌停池缺失时回退快照口径；全A等权指数为自建口径（个股等权、含北交所与 ST），非中证等权指数。<br/>单日指标易被突发扰动欺骗，建议结合连续 3–5 日的序列（中位数、新高占比是否持续抬升）再下结论。</div>
     </div>`;
 
   let m=document.getElementById('insightModal');
@@ -1311,7 +1311,7 @@ function renderMarketOverview(){
     : _med>0 ? '温和'
     : _med>-0.5 ? '弱' : '极弱';
   const _earnColor = (_earn==='强'||_earn==='较强') ? 'var(--up)' : (_earn==='温和') ? 'var(--yellow)' : (_earn==='--') ? 'var(--c-axis)' : 'var(--down)';
-  html+=`<div class="chart-panel" style="display:flex;flex-direction:row;align-items:flex-start;justify-content:center;gap:6px;padding-top:6px"><div style="flex:1;text-align:center"><div class="chart-title" style="font-size:13px;line-height:1.15;margin-bottom:2px;white-space:nowrap">等权指数</div><div style="font-size:24px;font-weight:700;font-family:Orbitron;line-height:1.1;color:var(--text)">${_ewIdx!=null?_ewIdx.toFixed(1):'--'}</div><div style="font-size:10px;font-family:Orbitron;font-weight:700;white-space:nowrap;line-height:1.15;color:${_ewRet==null?'var(--c-axis)':(_ewRet>=0?'var(--up)':'var(--down)')}">${_ewRet!=null?(_ewRet>0?'+':'')+_ewRet.toFixed(2)+'%':'--'}</div><div style="font-size:10px;color:var(--c-axis)">${_pxDate||''}</div></div><div style="flex:1;text-align:center"><div class="chart-title" style="font-size:13px;line-height:1.15;margin-bottom:2px;white-space:nowrap">中位数涨幅</div><div style="font-size:24px;font-weight:700;font-family:Orbitron;line-height:1.1;color:${_med==null?'var(--text)':(_med>=0?'var(--up)':'var(--down)')}">${_med!=null?(_med>0?'+':'')+_med.toFixed(2)+'%':'--'}</div><div style="font-size:10px;color:var(--c-axis)">当日</div><div style="font-size:11px;color:var(--text);white-space:nowrap">赚钱效应 <b style="color:${_earnColor};font-family:Orbitron">${_earn}</b></div></div><div style="flex:1;text-align:center"><div class="chart-title" style="font-size:13px;line-height:1.15;margin-bottom:2px;white-space:nowrap">平均股价</div><div style="display:flex;gap:10px;justify-content:center;align-items:flex-start"><div title="流通市值加权均价（Σ流通市值÷Σ流通股本），对齐通达信 880003" style="cursor:help"><div style="font-size:22px;font-weight:700;font-family:Orbitron;line-height:1.1;color:var(--text);white-space:nowrap">${_avgPx!=null?_avgPx.toFixed(2):'--'}<span style="font-size:10px;font-weight:400">元</span></div><div style="font-size:10px;color:var(--text)">加权</div><div style="font-size:13px;white-space:nowrap;font-family:Orbitron;font-weight:700;line-height:1.15;color:${_avgChg==null?'var(--c-axis)':(_avgChg>=0?'var(--up)':'var(--down)')}">环比 ${_avgChg!=null?(_avgChg>0?'+':'')+_avgChg.toFixed(2)+'%':'--'}</div></div><div title="算术平均，被高价股拉高，仅作参考" style="cursor:help"><div style="font-size:16px;font-weight:700;font-family:Orbitron;line-height:1.1;color:var(--c-axis);white-space:nowrap">${_b5.avg_price_simple!=null?_b5.avg_price_simple.toFixed(2):'--'}</div><div style="font-size:10px;color:var(--text)">平均</div><div style="font-size:11px;white-space:nowrap;font-family:Orbitron;font-weight:700;line-height:1.15;color:${(_b5.avg_price_simple_chg==null)?'var(--c-axis)':(_b5.avg_price_simple_chg>=0?'var(--up)':'var(--down)')}">环比 ${_b5.avg_price_simple_chg!=null?(_b5.avg_price_simple_chg>0?'+':'')+_b5.avg_price_simple_chg.toFixed(2)+'%':'--'}</div></div></div></div></div>`;
+  html+=`<div class="chart-panel" style="display:flex;flex-direction:row;align-items:flex-start;justify-content:center;gap:6px;padding-top:6px"><div style="flex:1;text-align:center"><div class="chart-title" title="自建指数：全A个股涨跌幅等权平均、按日复利；基点 1000 对应上一交易日；含北交所与 ST，非中证官方指数" style="font-size:12px;line-height:1.15;margin-bottom:2px;white-space:nowrap;cursor:help">全A等权指数</div><div style="font-size:24px;font-weight:700;font-family:Orbitron;line-height:1.1;color:var(--text)">${_ewIdx!=null?_ewIdx.toFixed(1):'--'}</div><div style="font-size:10px;font-family:Orbitron;font-weight:700;white-space:nowrap;line-height:1.15;color:${_ewRet==null?'var(--c-axis)':(_ewRet>=0?'var(--up)':'var(--down)')}">${_ewRet!=null?(_ewRet>0?'+':'')+_ewRet.toFixed(2)+'%':'--'}</div><div style="font-size:10px;color:var(--c-axis)">${_pxDate||''}</div></div><div style="flex:1;text-align:center"><div class="chart-title" style="font-size:13px;line-height:1.15;margin-bottom:2px;white-space:nowrap">中位数涨幅</div><div style="font-size:24px;font-weight:700;font-family:Orbitron;line-height:1.1;color:${_med==null?'var(--text)':(_med>=0?'var(--up)':'var(--down)')}">${_med!=null?(_med>0?'+':'')+_med.toFixed(2)+'%':'--'}</div><div style="font-size:10px;color:var(--c-axis)">当日</div><div style="font-size:11px;color:var(--text);white-space:nowrap">赚钱效应 <b style="color:${_earnColor};font-family:Orbitron">${_earn}</b></div></div><div style="flex:1;text-align:center"><div class="chart-title" style="font-size:13px;line-height:1.15;margin-bottom:2px;white-space:nowrap">平均股价</div><div style="display:flex;gap:10px;justify-content:center;align-items:flex-start"><div title="流通市值加权均价（Σ流通市值÷Σ流通股本），对齐通达信 880003" style="cursor:help"><div style="font-size:22px;font-weight:700;font-family:Orbitron;line-height:1.1;color:var(--text);white-space:nowrap">${_avgPx!=null?_avgPx.toFixed(2):'--'}<span style="font-size:10px;font-weight:400">元</span></div><div style="font-size:10px;color:var(--text)">加权</div><div style="font-size:13px;white-space:nowrap;font-family:Orbitron;font-weight:700;line-height:1.15;color:${_avgChg==null?'var(--c-axis)':(_avgChg>=0?'var(--up)':'var(--down)')}">环比 ${_avgChg!=null?(_avgChg>0?'+':'')+_avgChg.toFixed(2)+'%':'--'}</div></div><div title="算术平均，被高价股拉高，仅作参考" style="cursor:help"><div style="font-size:16px;font-weight:700;font-family:Orbitron;line-height:1.1;color:var(--c-axis);white-space:nowrap">${_b5.avg_price_simple!=null?_b5.avg_price_simple.toFixed(2):'--'}</div><div style="font-size:10px;color:var(--text)">平均</div><div style="font-size:11px;white-space:nowrap;font-family:Orbitron;font-weight:700;line-height:1.15;color:${(_b5.avg_price_simple_chg==null)?'var(--c-axis)':(_b5.avg_price_simple_chg>=0?'var(--up)':'var(--down)')}">环比 ${_b5.avg_price_simple_chg!=null?(_b5.avg_price_simple_chg>0?'+':'')+_b5.avg_price_simple_chg.toFixed(2)+'%':'--'}</div></div></div></div></div>`;
   html+=`<div class="chart-panel" style="position:relative;align-items:center;justify-content:center;display:flex;flex-direction:column"><div class="chart-title" style="position:absolute;left:14px;top:8px;margin:0">市场拥挤度</div><div style="font-size:24px;line-height:1.1;font-family:Orbitron;font-weight:700;color:${crowdOv>40?'var(--red)':crowdOv>30?'var(--orange)':'var(--green)'}">${crowdOv!=null?crowdOv.toFixed(1)+'%':'--'}</div><div style="font-size:10px;color:var(--c-axis);margin-top:0">前5%个股成交占比</div></div>`;
 
   const ls=mb.limit_stats||{};

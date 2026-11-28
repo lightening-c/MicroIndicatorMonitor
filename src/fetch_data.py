@@ -556,10 +556,9 @@ def fetch_weipan_cons(limit=400):
             for d in sorted(_ewh.keys()):
                 if d < trade_date:
                     _prev_idx = _ewh[d]
-            if _prev_idx and _ew is not None:
-                _ew_idx = round(_prev_idx * (1 + _ew / 100), 3)
-            else:
-                _ew_idx = 1000.0
+            # 基点 1000 对应「上一个交易日」；首日即按当日等权收益从 1000 起算
+            _base = _prev_idx if _prev_idx else 1000.0
+            _ew_idx = round(_base * (1 + (_ew or 0) / 100), 3)
             _ewh[trade_date] = _ew_idx
             _keep = sorted(_ewh.keys())[-250:]
             json.dump({d: _ewh[d] for d in _keep}, open(_ewf, "w", encoding="utf-8"), ensure_ascii=False)
@@ -597,10 +596,10 @@ def fetch_weipan_cons(limit=400):
             _bh = json.load(open(_bhf, encoding="utf-8")) if os.path.exists(_bhf) else {}
             _bh[trade_date] = {
                 "med": round(_med, 2),
-                "up_pct": round(sum(1 for c in _all_chg if c > 0) / len(_all_chg) * 100, 2) if _all_chg else None,
-                "up5_pct": round(_up5 / len(_all_chg) * 100, 2) if _all_chg else None,
-                "hi20_pct": round(_hi20 / len(_all_chg) * 100, 2) if (_hi20 is not None and _all_chg) else None,
-                "hi60_pct": round(_hi60 / len(_all_chg) * 100, 2) if (_hi60 is not None and _all_chg) else None,
+                "up_pct": round(sum(1 for c in _all_chg if c > 0) / len(_all_chg) * 100, 1) if _all_chg else None,
+                "up5_pct": round(_up5 / len(_all_chg) * 100, 1) if _all_chg else None,
+                "hi20_pct": round(_hi20 / len(_all_chg) * 100, 1) if (_hi20 is not None and _all_chg) else None,
+                "hi60_pct": round(_hi60 / len(_all_chg) * 100, 1) if (_hi60 is not None and _all_chg) else None,
                 "ew": _ew,
             }
             _bh = {k: _bh[k] for k in sorted(_bh.keys())[-60:]}
