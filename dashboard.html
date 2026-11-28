@@ -745,14 +745,14 @@ function showMarketInsight(){
       else if(med>=0&&upPct<40) combo='中位数小幅为正但广度极低，典型的极端抱团（少数票大涨、大量小票下跌），中性策略最需警惕';
       else combo='中位数与广度背离，注意结构脆弱';
     }
-    breadthTxt=`上涨占比 ${pct(upPct)}（${bw}），中位数 ${med!=null?med.toFixed(2)+'%':'--'}。${combo}`;
+    breadthTxt=`<b>结论</b>：广度处于${bw}区间（上涨占比 ${pct(upPct)}，阈值 60%/40%）。<br/><b>数据</b>：上涨 ${num(up)} 家（${pct(upPct)}）、下跌 ${num(dn)} 家（${pct(dnPct)}），中位数 ${med!=null?med.toFixed(2)+'%':'--'}。<br/><b>判断</b>：${combo}`;
   }
 
   // ── 3. 强度：区间分布 ──
   let strengthTxt='';
   if(p5!=null){
     const riser=p5+(p2_5||0)+(p0_2||0);
-    if(p5>=10) strengthTxt=`涨幅≥5% 占比 ${pct(p5)}，强势票多、有爆发力（上涨个股中 ${(p5/Math.max(riser,0.01)*100).toFixed(0)}% 涨超5%）`;
+    if(p5>=10) strengthTxt=`<b>结论</b>：上涨有爆发力，不是微小翻红。<br/><b>数据</b>：涨幅≥5% 的 ${num(bins.gt5)} 家（占全市场 ${pct(p5)}，占上涨个股 ${(p5/Math.max(riser,0.01)*100).toFixed(0)}%）；跌幅≥5% 仅 ${pct(lt5)}。<br/><b>判断</b>：强势票占主导，属有质量的修复`;
     else if(p0_2!=null&&p0_2>Math.max(p2_5||0,p5)) strengthTxt=`上涨个股绝大多数集中在 0~2%（${pct(p0_2)}），属于微弱翻红、弱修复，持续性与爆发力都偏弱`;
     else strengthTxt=`涨幅≥5% 占比 ${pct(p5)}，2~5% 占比 ${pct(p2_5)}，强度中等`;
     if(lt5!=null&&lt5>3) strengthTxt+=`；跌幅≥5% 占比 ${pct(lt5)}，恐慌杀跌在扩散`;
@@ -763,7 +763,7 @@ function showMarketInsight(){
   if(hi20P!=null){
     const midPulse=(zzChg!=null&&zzChg>0.5&&hi20P<10);
     if(midPulse) sustainTxt=`创20日新高占比仅 ${pct(hi20P)}，指数上涨但新高很少，更像脉冲行情，持续性差`;
-    else if(hi20P>=15) sustainTxt=`创20日新高占比 ${pct(hi20P)}、60日新高 ${pct(hi60P)}，新高面处于中上水平；单日读数不足以证明趋势，需看后续 3–5 日是否继续抬升（20D 灵敏、60D 确认中期）`;
+    else if(hi20P>=15) sustainTxt=`<b>结论</b>：新高面处于中上水平。<br/><b>数据</b>：创20日新高 ${num(b5.hi20)} 家（${pct(hi20P)}，约每 ${(100/Math.max(hi20P,0.01)).toFixed(1)} 只有 1 只）、创60日新高 ${num(b5.hi60)} 家（${pct(hi60P)}）。<br/><b>判断</b>：单日不足以证明趋势，需看后续 3–5 日是否继续抬升；20D 反映短期扩散、60D 确认中期`;
     else sustainTxt=`创20日新高占比 ${pct(hi20P)}、60日新高 ${pct(hi60P)}，扩散程度中等`;
   }
 
@@ -804,16 +804,25 @@ function showMarketInsight(){
   let ztTxt='';
   if(zb.rate!=null){
     const resealRatio=zb.zt_total?resealN/zb.zt_total*100:null;
-    ztTxt=`涨停 ${zb.zt_total} 家、炸板 ${zb.zb_total} 家（炸板率 ${pct(zb.rate)}），涨停中 ${resealN} 家回封（${pct(resealRatio)}）——东财池口径，不含北交所。`;
-    if(zb.rate<=10) ztTxt+='炸板率低，题材情绪较强。';
-    else if(zb.rate>=20) ztTxt+='炸板率偏高，打板资金亏钱效应明显。';
-    if(resealRatio!=null&&resealRatio>60) ztTxt+='回封占比高，说明盘中反复开合、封板质量参差（也可能反映承接较强，需结合次日溢价判断）。';
+    const _c6 = zb.rate<=10 ? '题材情绪较强，封板成功率尚可'
+      : zb.rate>=20 ? '打板资金亏钱效应明显'
+      : '情绪中性';
+    let _j6 = '';
+    if(resealRatio!=null&&resealRatio>60) _j6='回封占比高，盘中反复开合、封板质量参差（也可能反映承接较强），次日溢价需观察';
+    else if(resealRatio!=null&&resealRatio<30) _j6='回封占比低，炸开后多数未能重新封回，谨慎追高';
+    else _j6='封板质量中性，结合次日溢价与板块持续性判断';
+    ztTxt=`<b>结论</b>：${_c6}。`
+      + `<br/><b>数据</b>：涨停 ${zb.zt_total} 家、炸板 ${zb.zb_total} 家（炸板率 ${pct(zb.rate)}）；涨停中 ${resealN} 家回封（${pct(resealRatio)}）。东财池口径，不含北交所。`
+      + `<br/><b>判断</b>：${_j6}。`;
   }
 
   // ── 7. PSY ──
-  let psyTxt='数据积累中（需至少 20 个交易日的涨跌家数历史，当前样本不足）';
+  let psyTxt='<b>结论</b>：数据积累中，暂不计算。<br/><b>数据</b>：需至少 20 个交易日的涨跌家数历史，当前样本不足。';
   if(psy20!=null){
-    psyTxt=`PSY20 ${pct(psy20)}${psy60!=null?'、PSY60 '+pct(psy60):''}——${psy20>=60?'偏多头周期':psy20<=40?'偏空头周期':'多空交替'}（用于大周期背景，不作单日决策）。`;
+    const _c7 = psy20>=60?'偏多头周期':psy20<=40?'偏空头周期':'多空交替';
+    psyTxt=`<b>结论</b>：情绪${_c7}。`
+      + `<br/><b>数据</b>：PSY20 ${pct(psy20)}${psy60!=null?'、PSY60 '+pct(psy60):''}（上涨天数占比）。`
+      + `<br/><b>判断</b>：用于大周期背景参考，不作单日决策。`;
   }
 
   // ── 7.5 连续序列（近 5 日） ──
@@ -825,9 +834,13 @@ function showMarketInsight(){
     let sB=0; for(const h of rev){ if(h.up_pct!=null&&h.up_pct>60) sB++; else break; }
     const hiArr=hist.map(h=>h.hi20_pct).filter(v=>v!=null);
     const hiD=hiArr.length>=3?(hiArr[hiArr.length-1]-hiArr[hiArr.length-3]):null;
-    streakTxt=`中位数连续为正 ${sMed} 日，上涨占比连续>60% ${sB} 日${hiD!=null?`，20日新高占比近3日 ${hiD>=0?'+':''}${hiD.toFixed(1)}pp`:''}`;
-    if(sMed>=3) streakTxt+=' —— 赚钱效应在积累';
-    else if(sMed<=1) streakTxt+=' —— 序列尚短，暂不足以判断趋势';
+    const _c8 = sMed>=3 ? '赚钱效应在积累' : sMed<=1 ? '序列尚短，暂不足以判断趋势' : '赚钱效应偏弱';
+    const _j8 = sMed>=3
+      ? (hiD!=null&&hiD>0 ? '新高占比同步抬升，赚钱效应向趋势扩散' : '新高占比未同步抬升，持续性仍待观察')
+      : '需累计 3–5 日序列（中位数、新高占比是否持续抬升）后再下结论';
+    streakTxt=`<b>结论</b>：${_c8}。`
+      + `<br/><b>数据</b>：中位数连续为正 ${sMed} 日、上涨占比连续>60% ${sB} 日${hiD!=null?`；20日新高占比近3日变化 ${hiD>=0?'+':''}${hiD.toFixed(1)}pp`:''}。`
+      + `<br/><b>判断</b>：${_j8}。`;
   }
   const histRows=hist.map(h=>`<tr><td>${h.date.slice(5)}</td><td style="text-align:right">${h.med!=null?h.med.toFixed(2)+'%':'--'}</td><td style="text-align:right">${h.up_pct!=null?h.up_pct.toFixed(1)+'%':'--'}</td><td style="text-align:right">${h.hi20_pct!=null?h.hi20_pct.toFixed(1)+'%':'--'}</td><td style="text-align:right">${h.ew!=null?h.ew.toFixed(2)+'%':'--'}</td></tr>`).join('');
   const histBlock = hist.length ? `<div style="margin-top:8px"><b style="color:var(--accent)">⑧ 连续序列（近 ${hist.length} 日）</b><br/>${streakTxt}<br/><table class="limit-table" style="font-size:14px;margin-top:8px"><thead><tr><th>日期</th><th style="text-align:right">中位数</th><th style="text-align:right">上涨占比</th><th style="text-align:right">20D新高</th><th style="text-align:right">等权收益</th></tr></thead><tbody>${histRows}</tbody></table></div>` : '';
