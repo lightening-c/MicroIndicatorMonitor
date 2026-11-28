@@ -338,24 +338,43 @@ def fetch_sw_industry_index(sw_code, ind_id, ind_name):
 #  通过东方财富 push2 clist/get 接口拉取全市场股票
 # ═══════════════════════════════════════════════════════════════
 def _breadth_em():
-    """备用：东财 clist（常被限流，返回可能不完整）。"""
+    """东财 clist 全市场快照（分页并发），返回涨跌幅/名称/代码/现价/量比。"""
+    import math
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     url = "https://push2.eastmoney.com/api/qt/clist/get"
-    params = {
-        "pn": "1", "pz": "10000", "po": "1", "np": "1",
-        "ut": "bd1d9ddb04089700cf9c27f6f7426281", "fltt": "2", "invt": "2",
-        "fid": "f3", "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23",
-        "fields": "f2,f3,f12,f14", "_": str(int(time.time() * 1000)),
-    }
-    r = requests.get(url, params=params, timeout=30,
-                     headers={"User-Agent": "Mozilla/5.0", "Referer": "https://quote.eastmoney.com/"})
-    data = (r.json() or {}).get("data") or {}
-    rows = data.get("diff") or []
+
+    def _page(pn):
+        params = {
+            "pn": str(pn), "pz": "100", "po": "1", "np": "1",
+            "ut": "bd1d9ddb04089700cf9c27f6f7426281", "fltt": "2", "invt": "2",
+            "fid": "f12", "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048",
+            "fields": "f2,f3,f10,f12,f14", "_": str(int(time.time() * 1000)),
+        }
+        r = requests.get(url, params=params, timeout=20,
+                         headers={"User-Agent": "Mozilla/5.0", "Referer": "https://quote.eastmoney.com/"})
+        data = (r.json() or {}).get("data") or {}
+        return data.get("diff") or [], int(data.get("total") or 0)
+
+    rows, total = _page(1)
     if not rows:
         return None
+    pages = min(80, math.ceil(total / 100)) if total else 1
+    if pages > 1:
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            futs = [ex.submit(_page, pn) for pn in range(2, pages + 1)]
+            for f in as_completed(futs):
+                try:
+                    more, _ = f.result()
+                    rows.extend(more)
+                except Exception:
+                    pass
     chg = pd.to_numeric(pd.Series([x.get("f3") for x in rows]), errors="coerce")
     name = pd.Series([str(x.get("f14") or "") for x in rows])
     code = pd.Series([str(x.get("f12") or "") for x in rows])
-    return chg, name, code
+    px = pd.to_numeric(pd.Series([x.get("f2") for x in rows]), errors="coerce")
+    vr = pd.to_numeric(pd.Series([x.get("f10") for x in rows]), errors="coerce")
+    return chg, name, code, px, vr
 
 
 def _stock_board(c):
@@ -396,21 +415,31 @@ def fetch_market_breadth():
                 print("  [SKIP] 周末且无法确认交易日，跳过市场宽度")
                 return None
 
-    chg = name = code = None
+    chg = name = code = px = vr = None
     try:
         d = ak.stock_zh_a_spot()
         code = d["代码"].astype(str)
         name = d["名称"].astype(str)
         chg = pd.to_numeric(d["涨跌幅"], errors="coerce")
+        if "最新价" in d.columns:
+            px = pd.to_numeric(d["最新价"], errors="coerce")
         if chg.notna().sum() < 1000:
             raise RuntimeError("新浪样本不足")
         src = "新浪"
+        # 新浪快照无「量比」，用东财单次 clist 补齐现价/量比
+        em = _breadth_em()
+        if em:
+            _, _, ecode, epx, evr = em
+            m = dict(zip(ecode.astype(str).str[-6:].str.zfill(6), zip(epx, evr)))
+            keys = code.astype(str).str[-6:].str.zfill(6)
+            px = keys.map(lambda c: m.get(c, (None, None))[0])
+            vr = keys.map(lambda c: m.get(c, (None, None))[1])
     except Exception as e:
         print(f"  [WARN] 新浪快照失败 {type(e).__name__}，改用东财")
         try:
             got = _breadth_em()
             if got:
-                chg, name, code = got
+                chg, name, code, px, vr = got
                 src = "东财"
         except Exception as e2:
             print(f"  [ERR] 东财也失败 {type(e2).__name__}")
@@ -442,10 +471,14 @@ def fetch_market_breadth():
     def _detail(i):
         c = str(code.loc[i])
         info = swmap.get(c) or {}
+        price = float(px.loc[i]) if px is not None and pd.notna(px.loc[i]) else None
+        ratio = float(vr.loc[i]) if vr is not None and pd.notna(vr.loc[i]) else None
         return {"code": c, "name": str(name.loc[i]),
                 "board": _stock_board(c),
                 "industry": info.get("l3") or info.get("l2") or _stock_board(c),
-                "chg": round(float(chg.loc[i]), 2)}
+                "chg": round(float(chg.loc[i]), 2),
+                "price": round(price, 2) if price is not None else None,
+                "vr": round(ratio, 2) if ratio is not None else None}
 
     try:
         detail = {"date": trade_date,
