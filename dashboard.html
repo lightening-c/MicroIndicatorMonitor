@@ -202,7 +202,10 @@ body::after {
 .sw-item{display:flex;justify-content:space-between;align-items:center;padding:6px 8px;border-bottom:1px solid var(--border);cursor:pointer;font-size:13px}
 .sw-item:hover{background:rgba(255,255,255,0.05)}
 .sw-item.on{background:rgba(0,229,255,0.12);color:var(--accent)}
-.sw-meta{font-size:11px;color:var(--dim);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sw-meta{font-size:13px;color:var(--dim);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sw-tree .chart-title{font-size:17px}
+.sw-tree .kpi-label{font-size:14px}
+.sw-tree .sw-item{font-size:15px}
 .tab-fresh{margin:0 0 14px;padding:10px 14px;border:1px solid var(--border);border-radius:10px;background:linear-gradient(180deg,rgba(255,255,255,0.04),rgba(0,0,0,0.18)),var(--panel);box-shadow:inset 0 1px 0 rgba(255,255,255,0.05)}
 .tab-fresh-text{display:flex;justify-content:space-between;gap:12px;font-size:12px;color:var(--dim);margin-bottom:7px}
 .tab-fresh-text span:last-child{font-weight:700;letter-spacing:.3px;text-shadow:0 0 10px currentColor}
@@ -1047,9 +1050,9 @@ function renderIndustryIndices(){
 
   if(DATA.sw_tree){
     const t=DATA.sw_tree, tot=t.totals||{};
-    html+='<div class="chart-grid" style="grid-template-columns:1fr"><div class="chart-panel full">';
-    html+='<div class="chart-title">申万行业分类树（一级 → 二级 → 三级）<button class="rule-btn" onclick="showIndexRule(\'申万行业\')">编制规则</button><span style="font-size:12px;color:var(--dim);margin-left:8px">'+(t.trade_date||(t.updated||'').slice(0,10))+' · 成分股 '+(tot.stocks||'--')+' 家</span></div>';
-    html+='<div style="font-size:12px;color:var(--dim);margin-bottom:8px">涨跌幅为成分股按总市值加权；点击一级、二级行业逐级下钻</div>';
+    html+='<div class="chart-grid" style="grid-template-columns:1fr"><div class="chart-panel full sw-tree">';
+    html+='<div class="chart-title">申万行业分类树（一级 → 二级 → 三级）<button class="rule-btn" onclick="showIndexRule(\'申万行业\')">编制规则</button><span style="font-size:14px;color:var(--dim);margin-left:8px">'+(t.trade_date||(t.updated||'').slice(0,10))+' · 成分股 '+(tot.stocks||'--')+' 家</span></div>';
+    html+='<div style="font-size:14px;color:var(--dim);margin-bottom:8px">涨跌幅为成分股按总市值加权；点击一级、二级行业逐级下钻</div>';
     html+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">';
     html+=`<div><div class="kpi-label" style="margin-bottom:6px">一级行业 ${tot.l1||t.l1.length} 个</div><div id="swL1" class="sw-col"></div></div>`;
     html+=`<div><div class="kpi-label" style="margin-bottom:6px">二级行业 ${tot.l2||t.l2.length} 个</div><div id="swL2" class="sw-col"></div></div>`;
@@ -1073,7 +1076,7 @@ function _swRow(it,on,fn,childLabel){
   const ld=it.limit_down!=null?it.limit_down:'--';
   const child=(it.n_children&&childLabel)?`${it.n_children} ${childLabel} · `:'';
   const attrs=fn?` onclick="${fn}('${it.code}')"`:' style="cursor:default"';
-  return `<div class="sw-item${on?' on':''}"${attrs}><div style="flex:1;min-width:0"><div style="display:flex;justify-content:space-between;gap:6px"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${it.name}</span><span class="${cls}" style="font-family:Orbitron;font-size:12px">${ch!=null?(ch>0?'+':'')+ch.toFixed(2)+'%':'--'}</span></div><div class="sw-meta">${child}${n} 家 · 涨停 ${lu} · 跌停 ${ld}</div></div></div>`;
+  return `<div class="sw-item${on?' on':''}"${attrs}><div style="flex:1;min-width:0"><div style="display:flex;justify-content:space-between;gap:6px"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${it.name}</span><span class="${cls}" style="font-family:Orbitron;font-size:14px">${ch!=null?(ch>0?'+':'')+ch.toFixed(2)+'%':'--'}</span></div><div class="sw-meta">${child}${n} 家 · 涨停 ${lu} · 跌停 ${ld}</div></div></div>`;
 }
 function renderSwCols(){
   const t=DATA.sw_tree; if(!t) return;
