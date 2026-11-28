@@ -277,6 +277,85 @@ def fetch_weipan_cons(limit=400):
 
     # ── ST 板块快照 ──
     try:
+        # 含 ST 的沪深全样本市值排名（近似，用于判断所属层级）
+        all_hs = [{"code": z["code"], "mv_yi": z["mv_yi"]} for z in valid
+                  if not z["code"].startswith(("8", "4", "92"))]
+        all_hs += [{"code": z["code"], "mv_yi": z["mv_yi"]} for z in st_list
+                   if not z["code"].startswith(("8", "4", "92")) and z.get("mv_yi")]
+        all_hs.sort(key=lambda z: z["mv_yi"])
+        rank_all = {z["code"]: i + 1 for i, z in enumerate(all_hs)}
+
+        _total = len(all_hs)
+
+        def _bucket(code):
+            r_asc = rank_all.get(code)
+            if r_asc is None:
+                return "北交所" if code.startswith(("8", "4", "92")) else "无"
+            r = _total - r_asc + 1   # 转为降序排名（1=市值最大）
+            if r <= 300:
+                return "沪深300层"
+            if r <= 800:
+                return "中证500层"
+            if r <= 1800:
+                return "中证1000层"
+            if r <= 3800:
+                return "中证2000层"
+            return "微盘层(>3800名)"
+        for z in st_list:
+            z["bucket"] = _bucket(z["code"])
+            z["rank"] = (_total - rank_all[z["code"]] + 1) if z["code"] in rank_all else None
+        # ── ST 名单变化（近期加减）──
+        try:
+            st_hist_file = os.path.join(DATA_DIR, "st_history.json")
+            st_hist = {}
+            if os.path.exists(st_hist_file):
+                try:
+                    st_hist = json.load(open(st_hist_file, encoding="utf-8"))
+                except Exception:
+                    st_hist = {}
+            st_prev_date = None
+            for d in sorted(st_hist.keys()):
+                if d < trade_date:
+                    st_prev_date = d
+            today_st = [z["code"] for z in st_list]
+            if st_prev_date:
+                prev_set = set(st_hist[st_prev_date])
+                today_set = set(today_st)
+                added_codes = [c for c in today_st if c not in prev_set]
+                removed_codes = [c for c in st_hist[st_prev_date] if c not in today_set]
+                st_by_code = {z["code"]: z for z in st_list}
+                uni_by_code = {z["code"]: z for z in valid}
+                def _strow(code, direction):
+                    z = st_by_code.get(code) or uni_by_code.get(code)
+                    row = {"code": code,
+                           "name": (z or {}).get("name", code),
+                           "industry": (z or {}).get("industry", ""),
+                           "price": (z or {}).get("price"),
+                           "chg": (z or {}).get("chg"),
+                           "mv_yi": (z or {}).get("mv_yi")}
+                    if direction == "add":
+                        row["reason"] = "新纳入 ST（戴帽）"
+                    else:
+                        row["reason"] = "已摘帽（名称不再含 ST）" if z else "退市/停牌退出"
+                    return row
+                with open(os.path.join(DATA_DIR, "st_changes.json"), "w", encoding="utf-8") as f:
+                    json.dump({"date": trade_date, "prev_date": st_prev_date,
+                               "added": [_strow(c, "add") for c in added_codes],
+                               "removed": [_strow(c, "del") for c in removed_codes]},
+                              f, ensure_ascii=False)
+                print(f"  [OK] ST 名单变化：新进 {len(added_codes)} / 摘帽 {len(removed_codes)}（对比 {st_prev_date}）")
+            else:
+                with open(os.path.join(DATA_DIR, "st_changes.json"), "w", encoding="utf-8") as f:
+                    json.dump({"date": trade_date, "prev_date": None, "added": [], "removed": [],
+                               "note": "首次记录 ST 名单，暂无可对比的上一交易日"}, f, ensure_ascii=False)
+            st_hist[trade_date] = today_st
+            keep_days = sorted(st_hist.keys())[-60:]
+            st_hist = {d: st_hist[d] for d in keep_days}
+            with open(st_hist_file, "w", encoding="utf-8") as f:
+                json.dump(st_hist, f, ensure_ascii=False)
+        except Exception as e:
+            print(f"  [WARN] ST 名单变化计算失败: {e}")
+
         st_payload = {"date": trade_date, "list": sorted(st_list, key=lambda z: z["chg"], reverse=True)}
         with open(os.path.join(DATA_DIR, "st_board.json"), "w", encoding="utf-8") as f:
             json.dump(st_payload, f, ensure_ascii=False)

@@ -575,6 +575,15 @@ async function showWeipanChanges(){
   m.onclick=e=>{if(e.target===m) closeIndexCons();};
 }
 
+function stCardHtml(){
+      const sb=DATA.st_board||{list:[]}, srows=sb.list||[];
+      const upN=srows.filter(r=>(r.chg||0)>=stLim(r)-0.15).length;
+      const dnN=srows.filter(r=>(r.chg||0)<=-(stLim(r)-0.15)).length;
+      return `<div class="kpi-card"><div class="kpi-label">ST板块</div><div style="display:flex;gap:6px;margin-top:4px"><button class="rule-btn" style="margin-left:0;font-size:12px;padding:2px 9px" onclick="showSTBoard()">明细</button><button class="rule-btn" style="margin-left:0;font-size:12px;padding:2px 9px" onclick="showSTChanges()">最近增减</button></div><div style="display:flex;gap:12px;align-items:flex-end;justify-content:space-between;margin-top:6px"><div style="text-align:left"><div style="color:var(--up);font-size:24px;font-family:Orbitron;line-height:1.1">${upN}</div><div style="font-size:11px;color:var(--text)">涨停</div></div><div style="text-align:center"><div style="color:var(--text);font-size:30px;font-weight:800;font-family:Orbitron;line-height:1.05">${srows.length}</div><div style="font-size:11px;color:var(--c-axis)">只数</div></div><div style="text-align:right"><div style="color:var(--down);font-size:24px;font-family:Orbitron;line-height:1.1">${dnN}</div><div style="font-size:11px;color:var(--text)">跌停</div></div></div><div style="font-size:10px;color:var(--c-axis);margin-top:4px">${sb.date||''}</div></div>`;
+}
+// 北证50 目前混合 43/83/87/920 段；待北交所全部迁移到 920 段后，改为仅 '920'
+const IDX_CODE_HINT={'上证综合指数':'60XXX','深证成指':'00XXX','创业板指':'30XXX','科创50':'688XX','北证50':'43/83/87/920','中证全指':'全市场','极致微盘400等权':'沪深小盘'};
+function idxLabel(n){ const h=IDX_CODE_HINT[n]; return h? n+' '+h : n; }
 function stLim(r){ const c=String(r.code||''); if(c.startsWith('300')||c.startsWith('301')||c.startsWith('688')) return 19.8; if(/^(8|4|92)/.test(c)) return 29.8; return 4.8; }
 async function showSTBoard(){
   let d=null;
@@ -587,15 +596,43 @@ async function showSTBoard(){
   const upCount=rows.filter(r=>(r.chg||0)>=stLim(r)-0.15).length;
   const downCount=rows.filter(r=>(r.chg||0)<=-(stLim(r)-0.15)).length;
   const body=rows.length
-    ?`<table class="limit-table"><thead><tr><th>名称</th><th>代码</th><th>行业</th><th style="text-align:right">现价</th><th style="text-align:right">涨跌幅</th><th style="text-align:right">成交额(亿)</th><th style="text-align:right">换手率</th><th style="text-align:right">总市值(亿)</th><th>备注</th></tr></thead><tbody>${rows.map(r=>{
+    ?`<table class="limit-table"><thead><tr><th>名称</th><th>代码</th><th>行业</th><th style="text-align:right">现价</th><th style="text-align:right">涨跌幅</th><th style="text-align:right">成交额(亿)</th><th style="text-align:right">换手率</th><th style="text-align:right">总市值(亿)</th><th>对应宽基</th><th>备注</th></tr></thead><tbody>${rows.map(r=>{
         const ch=r.chg, cc=ch>0?'up':ch<0?'down':'flat';
         const note=r.is_star?'<span style="color:var(--down)">*ST（退市风险）</span>':'<span style="color:var(--dim)">ST</span>';
-        return `<tr><td>${r.name}</td><td>${r.code}</td><td>${r.industry||'--'}</td><td style="text-align:right">${r.price!=null?r.price.toFixed(2):'--'}</td><td class="${cc}" style="text-align:right">${ch!=null?(ch>0?'+':'')+ch.toFixed(2)+'%':'--'}</td><td style="text-align:right">${r.amount_yi!=null?r.amount_yi.toFixed(2):'--'}</td><td style="text-align:right">${r.turnover!=null?r.turnover.toFixed(2)+'%':'--'}</td><td style="text-align:right">${r.mv_yi!=null?r.mv_yi.toFixed(1):'--'}</td><td>${note}</td></tr>`;
+        const bk=r.bucket?`<span style="color:var(--dim)">${r.rank?'市值第'+r.rank+'名 · ':''}${r.bucket}</span>`:'--';
+        return `<tr><td>${r.name}</td><td>${r.code}</td><td>${r.industry||'--'}</td><td style="text-align:right">${r.price!=null?r.price.toFixed(2):'--'}</td><td class="${cc}" style="text-align:right">${ch!=null?(ch>0?'+':'')+ch.toFixed(2)+'%':'--'}</td><td style="text-align:right">${r.amount_yi!=null?r.amount_yi.toFixed(2):'--'}</td><td style="text-align:right">${r.turnover!=null?r.turnover.toFixed(2)+'%':'--'}</td><td style="text-align:right">${r.mv_yi!=null?r.mv_yi.toFixed(1):'--'}</td><td>${bk}</td><td>${note}</td></tr>`;
       }).join('')}</tbody></table>`
     :'<div style="padding:24px;color:var(--dim)">暂无 ST 数据，请先执行一次更新</div>';
   let m=document.getElementById('weipanModal');
   if(!m){m=document.createElement('div');m.id='weipanModal';m.className='limit-modal';document.body.appendChild(m);}
   m.innerHTML=`<div class="limit-modal-box"><div class="limit-modal-head"><span>ST板块（${rows.length}）<span style="font-size:12px;color:var(--dim);margin-left:8px">${d.date||''} · 按涨跌幅降序</span><span style="font-size:12px;color:var(--up);margin-left:8px">涨停 ${upCount}</span><span style="font-size:12px;color:var(--down);margin-left:6px">跌停 ${downCount}</span></span><button class="rule-btn" onclick="closeIndexCons()">关闭</button></div><div class="limit-modal-body">${body}</div></div>`;
+  m.style.display='flex';
+  m.onclick=e=>{if(e.target===m) closeIndexCons();};
+}
+
+async function showSTChanges(){
+  let d=null;
+  try{
+    const r=await fetch('data/st_changes.json?t='+Date.now(),{cache:'no-store'});
+    if(r.ok) d=await r.json();
+  }catch(e){}
+  if(!d) d={added:[],removed:[]};
+  const add=d.added||[], del=d.removed||[];
+  const tbl=(rows,color)=>{
+    if(!rows.length) return '<div style="padding:12px 4px;color:var(--dim)">无</div>';
+    return `<table class="limit-table"><thead><tr><th>名称</th><th>代码</th><th>行业</th><th style="text-align:right">现价</th><th style="text-align:right">涨跌幅</th><th style="text-align:right">总市值(亿)</th><th>原因</th></tr></thead><tbody>${rows.map(r=>{
+      const ch=r.chg, cc=ch>0?'up':ch<0?'down':'flat';
+      return `<tr><td style="color:${color}">${r.name}</td><td>${r.code}</td><td>${r.industry||'--'}</td><td style="text-align:right">${r.price!=null?r.price.toFixed(2):'--'}</td><td class="${cc}" style="text-align:right">${ch!=null?(ch>0?'+':'')+ch.toFixed(2)+'%':'--'}</td><td style="text-align:right">${r.mv_yi!=null?r.mv_yi.toFixed(1):'--'}</td><td style="color:var(--dim)">${r.reason||'--'}</td></tr>`;
+    }).join('')}</tbody></table>`;
+  };
+  const note=d.prev_date?`对比 ${d.prev_date} · 新纳入 ${add.length} / 摘帽 ${del.length}`:(d.note||'首次记录 ST 名单，暂无可对比的上一交易日');
+  const body=`
+    <div style="margin:8px 0 4px;font-weight:700;color:var(--up)">新纳入 ST（${add.length}）</div>${tbl(add,'var(--up)')}
+    <div style="margin:16px 0 4px;font-weight:700;color:var(--down)">摘帽 / 退出（${del.length}）</div>${tbl(del,'var(--down)')}
+    <div style="margin-top:10px;font-size:12px;color:var(--dim)">口径：每交易日快照对比，名称含 ST/*ST 视为 ST 股；新出现=戴帽，消失=摘帽或退市。</div>`;
+  let m=document.getElementById('weipanModal');
+  if(!m){m=document.createElement('div');m.id='weipanModal';m.className='limit-modal';document.body.appendChild(m);}
+  m.innerHTML=`<div class="limit-modal-box"><div class="limit-modal-head"><span>ST板块 · 最近增减<span style="font-size:12px;color:var(--dim);margin-left:8px">${d.date||''} · ${note}</span></span><button class="rule-btn" onclick="closeIndexCons()">关闭</button></div><div class="limit-modal-body">${body}</div></div>`;
   m.style.display='flex';
   m.onclick=e=>{if(e.target===m) closeIndexCons();};
 }
@@ -610,7 +647,7 @@ function layoutKpiGrids(){
     let cols;
     if(currentTab===0 && window.innerWidth>=1200){ cols=n; }        // 市场总览：一行放完，与下方三块合计两行
     else if(window.innerWidth<900){ cols=Math.min(2,n); }
-    else { cols=Math.min(7, Math.ceil(n/2)); }
+    else { cols=Math.min(8, Math.ceil(n/2)); }
     g.style.gridTemplateColumns='repeat('+cols+',minmax(0,1fr))';
     g.classList.toggle('kpi-dense', cols>=7);
   });
@@ -973,7 +1010,7 @@ function initMarketCharts(){
   renderCustomChart();
   makeLineChart('chart_major_trend', (DATA.major_indices||[]).map(idx=>{
     const ts=idx.ts_data||[]; const first=ts.length>0?ts[0].value:1;
-    return {name:idx.name,data:ts.map(p=>[p.date,+(p.value/first*100).toFixed(2)])};
+    return {name:idxLabel(idx.name),data:ts.map(p=>[p.date,+(p.value/first*100).toFixed(2)])};
   }), '标准化走势 (首日=100)');
 }
 
@@ -985,13 +1022,8 @@ function renderMarketOverview(){
     const ch=idx.change_1d, cls=ch>0?'up':ch<0?'down':'flat', sign=ch>0?'+':'';
     const _hasCons = ['极致微盘400等权','科创50','北证50'].includes(idx.name);
     const _consBtn = _hasCons ? `<button class="rule-btn" style="margin-left:6px;font-size:12px;padding:2px 9px" onclick="showIndexCons('${idx.name}')">成分股</button>${idx.name==='极致微盘400等权' ? '<button class="rule-btn" style="margin-left:4px;font-size:12px;padding:2px 9px" onclick="showWeipanChanges()">当日调仓</button>' : ''}` : '';
-    html+=`<div class="kpi-card"><div class="kpi-label">${idx.name}${_consBtn}</div><div class="kpi-value ${cls}">${idx.latest_value?.toFixed(2)||'--'}</div><div class="kpi-change ${cls}">${sign}${ch!=null?ch.toFixed(2)+'%':'--'}</div><div style="font-size:10px;color:var(--c-axis);margin-top:4px">${idx.latest_date||''}</div></div>`;
-    if(idx.name==='极致微盘400等权'){
-      const sb=DATA.st_board||{list:[]}, srows=sb.list||[];
-      const upN=srows.filter(r=>(r.chg||0)>=stLim(r)-0.15).length;
-      const dnN=srows.filter(r=>(r.chg||0)<=-(stLim(r)-0.15)).length;
-      html+=`<div class="kpi-card"><div class="kpi-label">ST板块&nbsp;<button class="rule-btn" style="margin-left:4px;font-size:12px;padding:2px 9px" onclick="showSTBoard()">明细</button></div><div style="display:flex;gap:18px;align-items:baseline;margin-top:6px"><div><div style="color:var(--up);font-size:26px;font-family:Orbitron">${upN}</div><div style="font-size:12px;color:var(--text)">涨停</div></div><div><div style="color:var(--down);font-size:26px;font-family:Orbitron">${dnN}</div><div style="font-size:12px;color:var(--text)">跌停</div></div><div><div style="font-size:20px;font-family:Orbitron;color:var(--text)">${srows.length}</div><div style="font-size:12px;color:var(--text)">只</div></div></div><div style="font-size:10px;color:var(--c-axis);margin-top:4px">${sb.date||''}</div></div>`;
-    }
+    html+=`<div class="kpi-card"><div class="kpi-label">${idxLabel(idx.name)}${_consBtn}</div><div class="kpi-value ${cls}">${idx.latest_value?.toFixed(2)||'--'}</div><div class="kpi-change ${cls}">${sign}${ch!=null?ch.toFixed(2)+'%':'--'}</div><div style="font-size:10px;color:var(--c-axis);margin-top:4px">${idx.latest_date||''}</div></div>`;
+    if(idx.name==='极致微盘400等权'){ html+=stCardHtml(); }
   });
   html+='</div>';
 
@@ -1020,11 +1052,11 @@ function renderMarketOverview(){
     const dir=idx.direction;
     const vol = idx.latest_volume;
     const vol_s = vol != null ? (vol >= 100 ? vol.toFixed(0) : vol.toFixed(1)) : '--';
-    html+=`<tr><td><b>${idx.name}</b><button class="rule-btn" onclick="showIndexRule('${idx.name}')">编制规则</button></td><td class="val">${idx.latest_value?.toFixed(2)||'--'}</td><td class="${s1}">${ch1!=null?(ch1>0?'+':'')+ch1.toFixed(2)+'%':'--'}</td><td>${vol_s}</td><td class="${s5}">${ch5!=null?(ch5>0?'+':'')+ch5.toFixed(2)+'%':'--'}</td><td class="${s20}">${ch20!=null?(ch20>0?'+':'')+ch20.toFixed(2)+'%':'--'}</td><td>${idx.rsi!=null?idx.rsi:'--'}</td><td><span class="tag tag-${dir}">${dir==='up'?'↑ 上升':dir==='down'?'↓ 下降':'→ 震荡'}</span></td><td>${idx.bollinger?(idx.bollinger.position*100).toFixed(1)+'%':'--'}</td><td>${idx.latest_date||'--'}</td></tr>`;
+    html+=`<tr><td><b>${idxLabel(idx.name)}</b><button class="rule-btn" onclick="showIndexRule('${idx.name}')">编制规则</button></td><td class="val">${idx.latest_value?.toFixed(2)||'--'}</td><td class="${s1}">${ch1!=null?(ch1>0?'+':'')+ch1.toFixed(2)+'%':'--'}</td><td>${vol_s}</td><td class="${s5}">${ch5!=null?(ch5>0?'+':'')+ch5.toFixed(2)+'%':'--'}</td><td class="${s20}">${ch20!=null?(ch20>0?'+':'')+ch20.toFixed(2)+'%':'--'}</td><td>${idx.rsi!=null?idx.rsi:'--'}</td><td><span class="tag tag-${dir}">${dir==='up'?'↑ 上升':dir==='down'?'↓ 下降':'→ 震荡'}</span></td><td>${idx.bollinger?(idx.bollinger.position*100).toFixed(1)+'%':'--'}</td><td>${idx.latest_date||'--'}</td></tr>`;
   });
   html+='</tbody></table></div></div></div>';
 
-  const _idxOpts=mi.map(x=>`<option value="${x.name}">${x.name}</option>`).join('');
+  const _idxOpts=mi.map(x=>`<option value="${x.name}">${idxLabel(x.name)}</option>`).join('');
   html+='<div class="chart-grid" style="grid-template-columns:1fr"><div class="chart-panel full">';
   html+='<div class="chart-title">指数走势（自定义）</div>';
   html+='<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:8px">';
@@ -1057,6 +1089,7 @@ function renderBroadIndices(){
   bis.forEach(idx=>{
     const ch=idx.change_1d, cls=ch>0?'up':ch<0?'down':'flat', sign=ch>0?'+':'';
     html+=`<div class="kpi-card"><div class="kpi-label">${idx.name}</div><div class="kpi-value ${cls}">${idx.latest_value?.toFixed(2)||'--'}</div><div class="kpi-change ${cls}">${sign}${ch!=null?ch.toFixed(2)+'%':'--'}</div><div style="font-size:10px;color:var(--c-axis);margin-top:4px">${idx.latest_date||''}</div></div>`;
+    if(idx.name==='极致微盘400等权'){ html+=stCardHtml(); }
   });
   html+='</div>';
 

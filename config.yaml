@@ -4,6 +4,16 @@
 indicators:
   # ── 各大盘指数 (5) ──────────────────────────────────
   major_indices:
+    - id: zzall
+      name: 中证全指
+      unit: 点
+      source: 中证指数公司
+      frequency: 每日
+      description: 沪深两市全部A股综合指数
+      akshare_func: csindex_daily
+      akshare_params: { code: "000985" }
+
+  # ── 宽基指数 (14) ──────────────────────────────────
     - id: sh_index
       name: 上证综合指数
       unit: 点
@@ -40,15 +50,6 @@ indicators:
       akshare_func: stock_zh_index_daily
       akshare_params: { symbol: sh000688 }
 
-    - id: bj50_index
-      name: 北证50
-      unit: 点
-      source: 北交所
-      frequency: 每日
-      description: 北交所代表指数
-      akshare_func: stock_zh_index_daily
-      akshare_params: { symbol: bj899050 }
-
     - id: weipan400
       name: 极致微盘400等权
       unit: 点
@@ -58,16 +59,15 @@ indicators:
       akshare_func: ths_index_daily
       akshare_params: { code: "48_883418" }
 
-    - id: zzall
-      name: 中证全指
+    - id: bj50_index
+      name: 北证50
       unit: 点
-      source: 中证指数公司
+      source: 北交所
       frequency: 每日
-      description: 沪深两市全部A股综合指数
-      akshare_func: csindex_daily
-      akshare_params: { code: "000985" }
+      description: 北交所代表指数
+      akshare_func: stock_zh_index_daily
+      akshare_params: { symbol: bj899050 }
 
-  # ── 宽基指数 (14) ──────────────────────────────────
   broad_indices:
     - id: a500
       name: 中证A500
