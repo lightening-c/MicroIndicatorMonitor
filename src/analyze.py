@@ -600,6 +600,17 @@ def analyze_market_breadth():
                 "down_ma5": round(float(down_vals.tail(5).mean()), 0) if len(down_vals) >= 5 else None,
             }
             result["up_down_ratio"] = ratio
+            # PSY：近 N 个交易日中「上涨家数 > 下跌家数」的占比
+            try:
+                _df = df_ad.copy()
+                _df["_u"] = pd.to_numeric(_df[up_col], errors="coerce")
+                _df["_d"] = pd.to_numeric(_df[down_col], errors="coerce")
+                _df = _df.dropna(subset=["_u", "_d"])
+                _win = (_df["_u"] > _df["_d"]).astype(int)
+                result["psy20"] = round(float(_win.tail(20).mean() * 100), 1) if len(_win) >= 20 else None
+                result["psy60"] = round(float(_win.tail(60).mean() * 100), 1) if len(_win) >= 60 else None
+            except Exception:
+                result["psy20"] = result["psy60"] = None
 
     try:
         with open(os.path.join(DATA_DIR, "limit_details.json"), "r", encoding="utf-8") as f:

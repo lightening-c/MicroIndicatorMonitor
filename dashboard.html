@@ -234,7 +234,7 @@ body::after {
 .limit-stat-btn:hover{background:rgba(255,255,255,0.05);border-color:var(--border);transform:translateY(-1px);box-shadow:0 4px 14px rgba(0,0,0,0.35)}
 .limit-stat-btn:active{transform:translateY(0)}
 .limit-modal-head .rule-btn{font-size:14px;font-weight:700;padding:4px 12px}
-.overview-grid { display:grid; grid-template-columns:minmax(0,1.28fr) minmax(0,0.60fr) minmax(0,1.02fr) minmax(0,1.62fr); gap:10px; margin-bottom:10px; }
+.overview-grid { display:grid; grid-template-columns:minmax(0,1.50fr) minmax(0,0.55fr) minmax(0,1.02fr) minmax(0,1.45fr); gap:10px; margin-bottom:10px; }
 .overview-grid .chart-panel { height:104px; min-height:104px; padding:4px 12px; overflow:hidden;
   display:flex; flex-direction:column; justify-content:center; }
 .overview-grid .chart-title { font-size:13px; margin-bottom:4px; }
@@ -471,35 +471,56 @@ function renderTabFreshness(){
 }
 
 async function showLimitDetail(kind){
-  let d=null;
+  let pool=null, detail=null;
+  try{
+    const rz=await fetch('data/zhaban.json?t='+Date.now(),{cache:'no-store'});
+    if(rz.ok) pool=await rz.json();
+  }catch(e){}
   try{
     const r=await fetch('data/limit_details.json?t='+Date.now(),{cache:'no-store'});
-    if(r.ok) d=await r.json();
+    if(r.ok) detail=await r.json();
   }catch(e){}
-  if(!d) d=(DATA.market_breadth||{}).limit_details||{};
-  const rows=((kind==='up'?d.up:d.down)||[]).slice().sort((a,b)=>{
-    const x=a.chg, y=b.chg;
-    if(x==null&&y==null) return 0;
-    if(x==null) return 1;
-    if(y==null) return -1;
-    return kind==='up' ? y-x : x-y;
-  });
+  if(!detail) detail=(DATA.market_breadth||{}).limit_details||{};
+
+  const isBJ=c=>/^(8|4|92)/.test(String(c||''));
+  let rows, bjRows=[], date=detail.date||'', poolUsed=false, poolCount=0;
+  if(kind==='up' && pool && (pool.zt_list||[]).length){
+    poolUsed=true;
+    rows=(pool.zt_list||[]).slice().sort((a,b)=>(b.chg||0)-(a.chg||0));
+    poolCount=rows.length;
+    date=pool.date||date;
+    const inPool=new Set(rows.map(r=>String(r.code)));
+    bjRows=((detail.up||[]).filter(r=>isBJ(r.code)&&!inPool.has(String(r.code))))
+      .sort((a,b)=>(b.chg||0)-(a.chg||0));
+  } else {
+    rows=((kind==='up'?detail.up:detail.down)||[]).slice().sort((a,b)=>{
+      const x=a.chg, y=b.chg;
+      if(x==null&&y==null) return 0;
+      if(x==null) return 1;
+      if(y==null) return -1;
+      return kind==='up' ? y-x : x-y;
+    });
+    if(kind==='up'){ bjRows=rows.filter(r=>isBJ(r.code)); rows=rows.filter(r=>!isBJ(r.code)); }
+  }
+
   const title=kind==='up'?'涨停明细':'跌停明细';
-  const body=rows.length
-    ?`<table class="limit-table"><thead><tr><th>名称</th><th>代码</th><th>板块</th><th style="text-align:right">现价</th><th style="text-align:right">成交额(亿)</th><th style="text-align:right">换手率</th><th style="text-align:right">涨跌幅</th><th style="text-align:right">缩/放量</th></tr></thead><tbody>${rows.map(r=>{
+  const tpl=(list)=>`<table class="limit-table"><thead><tr><th>名称</th><th>代码</th><th>板块</th><th style="text-align:right">现价</th><th style="text-align:right">成交额(亿)</th><th style="text-align:right">换手率</th><th style="text-align:right">涨跌幅</th><th style="text-align:right">缩/放量</th></tr></thead><tbody>${list.map(r=>{
         const ch=r.chg, cc=ch>0?'up':ch<0?'down':'flat';
         const vp=r.vr!=null?(r.vr-1)*100:null;
         const vt=vp==null?'--':(vp>=0?'放量 +':'缩量 ')+vp.toFixed(0)+'%';
         const vc=vp==null?'':(vp>=0?'up':'down');
         return `<tr><td>${r.name}</td><td>${r.code}</td><td>${r.industry||r.board||'--'}</td><td style="text-align:right">${r.price!=null?r.price.toFixed(2):'--'}</td><td style="text-align:right">${r.amount_yi!=null?r.amount_yi.toFixed(2):'--'}</td><td style="text-align:right">${r.turnover!=null?r.turnover.toFixed(2)+'%':'--'}</td><td class="${cc}" style="text-align:right">${ch!=null?(ch>0?'+':'')+ch.toFixed(2)+'%':'--'}</td><td class="${vc}" style="text-align:right">${vt}</td></tr>`;
-      }).join('')}</tbody></table>`
-    :'<div style="padding:24px;color:var(--dim)">暂无明细数据，请重新采集市场宽度</div>';
+      }).join('')}</tbody></table>`;
+
+  let body = rows.length ? tpl(rows) : '<div style="padding:24px;color:var(--dim)">暂无明细数据，请重新采集市场宽度</div>';
+  const compose = kind==='up' ? (poolUsed ? `池口径，不含北交所` : `沪深 ${rows.length} / 北交所 ${bjRows.length}`) : '';
   let m=document.getElementById('limitModal');
   if(!m){m=document.createElement('div');m.id='limitModal';m.className='limit-modal';document.body.appendChild(m);}
-  m.innerHTML=`<div class="limit-modal-box"><div class="limit-modal-head"><span>${title}（${rows.length}）<span style="font-size:12px;color:var(--dim);margin-left:8px">${d.date||''}</span></span><button class="rule-btn" onclick="closeLimitDetail()">关闭</button></div><div class="limit-modal-body">${body}</div></div>`;
+  m.innerHTML=`<div class="limit-modal-box"><div class="limit-modal-head"><span>${title}（${rows.length}）<span style="font-size:12px;color:var(--dim);margin-left:8px">${date}${compose?` · 构成：${compose}`:''}</span></span><button class="rule-btn" onclick="closeLimitDetail()">关闭</button></div><div class="limit-modal-body">${body}</div></div>`;
   m.style.display='flex';
   m.onclick=e=>{if(e.target===m) closeLimitDetail();};
 }
+
 const CONS_SRC={
   '极致微盘400等权':['data/weipan_cons.json','微盘股400成分股'],
   '科创50':['data/star50_cons.json','科创50成分股'],
@@ -673,6 +694,174 @@ async function showZhabanDetail(mode){
     if(hd) b.scrollTop=Math.max(0, hd.offsetTop-8);
   }
 }
+
+function showMarketInsight(){
+  const d=DATA||{}, b5=d.breadth5||{}, b=DATA.market_breadth||{}, ad=b.advance_decline||{};
+  const n=b5.n, up=ad.latest_up, dn=ad.latest_down;
+  const pct=v=>v!=null?v.toFixed(1)+'%':'--';
+  const num=v=>v!=null?Number(v).toLocaleString():'--';
+  const upPct=(up!=null&&n)?up/n*100:null;
+  const dnPct=(dn!=null&&n)?dn/n*100:null;
+  const med=b5.median_chg;
+  const zzAll=(d.major_indices||[]).find(x=>x.name&&x.name.indexOf('中证全指')>=0)||{};
+  const zz=(d.broad_indices||[]).find(x=>x.name&&x.name.indexOf('中证2000')>=0)||{};
+  const idxChg=zzAll.latest_value!=null?zzAll.change_1d:null;
+  const zzChg=zz.change_1d;
+  const bins=b5.bins||{};
+  const binPct=k=>(n&&bins[k]!=null)?bins[k]/n*100:null;
+  const p5=binPct('gt5'), lt5=binPct('lt5'), p2_5=binPct('p2_5'), p0_2=binPct('p0_2'), m2_0=binPct('m2_0'), m5_m2=binPct('m5_m2');
+  const hi20P=(n&&b5.hi20!=null)?b5.hi20/n*100:null, hi60P=(n&&b5.hi60!=null)?b5.hi60/n*100:null;
+  const avg=b5.avg_price, avgChg=b5.avg_price_chg;
+  const zb=d.zhaban||{}, resealN=(zb.reseal||[]).length;
+  const psy20=b.psy20, psy60=b.psy60;
+
+  // ── 1. 核心体感：中位数 + 中证2000 剪刀差 ──
+  let core='', coreTone='var(--text)';
+  if(idxChg!=null&&med!=null){
+    const gap=med-idxChg;
+    if(idxChg>0.5&&med<=0){ core='权重抱团：指数上涨但多数个股下跌，宽基指数被少数权重拉动——不宜追高，需提高对冲严谨度'; coreTone='var(--down)'; }
+    else if(idxChg>0.5&&med>0.3&&upPct!=null&&upPct>60){ core='普涨：市值加权与个股广度双好，Beta 环境舒适'; coreTone='var(--up)'; }
+    else if(Math.abs(idxChg)<=0.5&&med>0.3){ core='个股独立扩散：指数横盘而中位数明显为正，Alpha 环境友好，增强/中性更容易出超额'; coreTone='var(--up)'; }
+    else if(idxChg<-0.5&&med<0){ core='系统性杀跌：流动性收缩，优先降杠杆、控制对冲成本与尾部风险'; coreTone='var(--down)'; }
+    else { core=`结构分化：中位数 ${med.toFixed(2)}% vs 中证全指 ${idxChg.toFixed(2)}%（差值 ${gap.toFixed(2)}pp），方向不明确`; }
+  }
+
+  // ── 2. 广度 ──
+  let breadthTxt='';
+  if(upPct!=null){
+    const bw=upPct>60?'普涨':upPct>=40?'分化':'普跌';
+    let combo='';
+    if(med!=null){
+      if(med>0&&upPct>60) combo='中位数为正 + 广度>60%，高质量普涨，赚钱效应扎实';
+      else if(med>0&&upPct>=40) combo='中位数为正但广度一般，涨幅集中在强势小票，行情偏题材';
+      else if(med<0&&upPct<40) combo='中位数为负 + 广度<40%，亏钱效应扩散';
+      else if(med>=0&&upPct<40) combo='中位数小幅为正但广度极低，典型的极端抱团（少数票大涨、大量小票下跌），中性策略最需警惕';
+      else combo='中位数与广度背离，注意结构脆弱';
+    }
+    breadthTxt=`上涨占比 ${pct(upPct)}（${bw}），中位数 ${med!=null?med.toFixed(2)+'%':'--'}。${combo}`;
+  }
+
+  // ── 3. 强度：区间分布 ──
+  let strengthTxt='';
+  if(p5!=null){
+    const riser=p5+(p2_5||0)+(p0_2||0);
+    if(p5>=10) strengthTxt=`涨幅≥5% 占比 ${pct(p5)}，强势票多、有爆发力（上涨个股中 ${(p5/Math.max(riser,0.01)*100).toFixed(0)}% 涨超5%）`;
+    else if(p0_2!=null&&p0_2>Math.max(p2_5||0,p5)) strengthTxt=`上涨个股绝大多数集中在 0~2%（${pct(p0_2)}），属于微弱翻红、弱修复，持续性与爆发力都偏弱`;
+    else strengthTxt=`涨幅≥5% 占比 ${pct(p5)}，2~5% 占比 ${pct(p2_5)}，强度中等`;
+    if(lt5!=null&&lt5>3) strengthTxt+=`；跌幅≥5% 占比 ${pct(lt5)}，恐慌杀跌在扩散`;
+  }
+
+  // ── 4. 持续性：20D / 60D 新高 ──
+  let sustainTxt='';
+  if(hi20P!=null){
+    const midPulse=(zzChg!=null&&zzChg>0.5&&hi20P<10);
+    if(midPulse) sustainTxt=`创20日新高占比仅 ${pct(hi20P)}，指数上涨但新高很少，更像脉冲行情，持续性差`;
+    else if(hi20P>=15) sustainTxt=`创20日新高占比 ${pct(hi20P)}、60日新高 ${pct(hi60P)}，赚钱效应在扩散（20D 灵敏、60D 确认中期趋势）`;
+    else sustainTxt=`创20日新高占比 ${pct(hi20P)}、60日新高 ${pct(hi60P)}，扩散程度中等`;
+  }
+
+  // ── 5. 平均股价（辅助剪刀差） ──
+  let avgTxt='';
+  if(avg!=null){
+    if(avgChg!=null&&med!=null){
+      if(avgChg-med>1) avgTxt = med>2
+        ? `平均股价环比 ${pct(avgChg)} 高于中位数 ${med.toFixed(2)}%，说明高价股涨幅更大，但整体仍是普涨结构`
+        : `平均股价环比 ${pct(avgChg)} 明显强于中位数 ${med.toFixed(2)}%，上涨更多由高价股带动，广谱赚钱效应一般`;
+      else if(med-avgChg>1) avgTxt=`平均股价环比 ${pct(avgChg)} 弱于中位数 ${med.toFixed(2)}%，低价小票普涨、高价票不动，偏小票扩散`;
+      else avgTxt=`平均股价环比 ${pct(avgChg)} 与中位数基本同步，价格结构无显著偏向`;
+    }
+    const avgS=b5.avg_price_simple;
+    avgTxt=`加权 ${avg.toFixed(2)} 元（880003 口径，流通市值加权）${avgS!=null?`；平均 ${avgS.toFixed(2)} 元（算术平均，被高价股拉高，仅参考）`:''}。${avgTxt}`;
+  }
+
+  // ── 6. 涨跌停 / 炸板 ──
+  let ztTxt='';
+  if(zb.rate!=null){
+    const resealRatio=zb.zt_total?resealN/zb.zt_total*100:null;
+    ztTxt=`涨停 ${zb.zt_total} 家、炸板 ${zb.zb_total} 家（炸板率 ${pct(zb.rate)}），涨停中 ${resealN} 家回封（${pct(resealRatio)}）。`;
+    if(zb.rate<=10) ztTxt+='炸板率低，题材情绪较强。';
+    else if(zb.rate>=20) ztTxt+='炸板率偏高，打板资金亏钱效应明显。';
+    if(resealRatio!=null&&resealRatio>60) ztTxt+='回封占比高，盘中换手剧烈。';
+  }
+
+  // ── 7. PSY ──
+  let psyTxt='数据积累中（需至少 20 个交易日的涨跌家数历史，当前样本不足）';
+  if(psy20!=null){
+    psyTxt=`PSY20 ${pct(psy20)}${psy60!=null?'、PSY60 '+pct(psy60):''}——${psy20>=60?'偏多头周期':psy20<=40?'偏空头周期':'多空交替'}（用于大周期背景，不作单日决策）。`;
+  }
+
+  // ── 7.5 连续序列（近 5 日） ──
+  const hist=(b5.hist||[]).slice(-5);
+  let streakTxt='';
+  if(hist.length){
+    const rev=[...hist].reverse();
+    let sMed=0; for(const h of rev){ if(h.med!=null&&h.med>0) sMed++; else break; }
+    let sB=0; for(const h of rev){ if(h.up_pct!=null&&h.up_pct>60) sB++; else break; }
+    const hiArr=hist.map(h=>h.hi20_pct).filter(v=>v!=null);
+    const hiD=hiArr.length>=3?(hiArr[hiArr.length-1]-hiArr[hiArr.length-3]):null;
+    streakTxt=`中位数连续为正 ${sMed} 日，上涨占比连续>60% ${sB} 日${hiD!=null?`，20日新高占比近3日 ${hiD>=0?'+':''}${hiD.toFixed(1)}pp`:''}`;
+    if(sMed>=3) streakTxt+=' —— 赚钱效应在积累';
+    else if(sMed<=1) streakTxt+=' —— 序列尚短，暂不足以判断趋势';
+  }
+  const histRows=hist.map(h=>`<tr><td>${h.date.slice(5)}</td><td style="text-align:right">${h.med!=null?h.med.toFixed(2)+'%':'--'}</td><td style="text-align:right">${h.up_pct!=null?h.up_pct.toFixed(1)+'%':'--'}</td><td style="text-align:right">${h.hi20_pct!=null?h.hi20_pct.toFixed(1)+'%':'--'}</td><td style="text-align:right">${h.ew!=null?h.ew.toFixed(2)+'%':'--'}</td></tr>`).join('');
+  const histBlock = hist.length ? `<div style="margin-top:8px"><b style="color:var(--accent)">⑧ 连续序列（近 ${hist.length} 日）</b><br/>${streakTxt}<br/><table class="limit-table" style="font-size:14px;margin-top:8px"><thead><tr><th>日期</th><th style="text-align:right">中位数</th><th style="text-align:right">上涨占比</th><th style="text-align:right">20D新高</th><th style="text-align:right">等权收益</th></tr></thead><tbody>${histRows}</tbody></table></div>` : '';
+
+  // ── 8. 情景匹配 ──
+  const scen=[
+    {id:1,cond:(idxChg>0&&med>0&&upPct>60&&p5>5),txt:'普涨、扩散好，Beta+Alpha 双优，正常运行'},
+    {id:2,cond:(idxChg>0&&med<=0&&upPct<40),txt:'权重抱团，小票失血；中性残差风险大，不放大杠杆，严控对冲'},
+    {id:3,cond:(idxChg<=0.5&&med>0&&upPct>=45&&upPct<=60),txt:'小票独立行情，Alpha 黄金窗口，增强容易出超额'},
+    {id:4,cond:(idxChg>0&&med>0&&p5<=5),txt:'指数脉冲，只是微弱翻红，没有爆发力，持续性差，谨慎'},
+    {id:5,cond:(idxChg<0&&med<0&&upPct<40),txt:'系统性杀跌，降杠杆、控回撤，规避尾部流动性风险'},
+  ];
+  let hit=null;
+  for(const s of scen){ try{ if(s.cond){hit=s;break;} }catch(e){} }
+  const scenTxt=hit?`情景 ${hit.id}：${hit.txt}`:'情景 6：震荡轮动期，超额波动放大，降低预期、减少换手';
+
+  const body=`
+    <div style="font-size:18px;line-height:2">
+      <div><b style="color:var(--accent)">① 核心体感（中位数 vs 中证全指）</b><br/>个股中位数 ${med!=null?med.toFixed(2)+'%':'--'}，中证全指 ${idxChg!=null?idxChg.toFixed(2)+'%':'--'}${zzChg!=null?`（中证2000 ${zzChg.toFixed(2)}%）`:''}。<span style="color:${coreTone}">${core||'--'}</span></div>
+      <div style="margin-top:8px"><b style="color:var(--accent)">② 广度</b><br/>${breadthTxt||'--'}</div>
+      <div style="margin-top:8px"><b style="color:var(--accent)">③ 强度（涨跌幅区间）</b><br/>${strengthTxt||'--'}<br/><span style="color:var(--dim);font-size:14.5px">&gt;5% ${pct(p5)}｜2~5% ${pct(p2_5)}｜0~2% ${pct(p0_2)}｜-2~0 ${pct(m2_0)}｜-5~-2 ${pct(m5_m2)}｜&lt;-5% ${pct(lt5)}</span></div>
+      <div style="margin-top:8px"><b style="color:var(--accent)">④ 持续性（新高占比）</b><br/>${sustainTxt||'--'}</div>
+      <div style="margin-top:8px"><b style="color:var(--accent)">⑤ 平均股价（辅助）</b><br/>${avgTxt||'--'}<br/><span style="font-size:13.5px;color:var(--dim)">备注：判断行情强弱请用<b>加权</b>口径（对齐通达信 880003）；算术平均因茅台等高价股权重过大，仅作结构参考，勿据此判断趋势。</span></div>
+      <div style="margin-top:8px"><b style="color:var(--accent)">⑥ 涨跌停 / 炸板</b><br/>${ztTxt||'--'}</div>
+      <div style="margin-top:8px"><b style="color:var(--accent)">⑦ PSY</b><br/>${psyTxt||'--'}</div>
+      ${histBlock}
+      <div style="margin-top:12px;padding:10px 12px;border:1px solid var(--accent);border-radius:8px;background:rgba(0,229,255,0.06)"><b style="color:var(--accent)">情景对照</b><br/>${scenTxt}</div>
+      <div style="margin-top:12px;font-size:13.5px;color:var(--dim);line-height:1.8">口径：中位数为全A涨跌幅中位数；广度含北交所快照；区间分布与≥5%同源；新高来自同花顺排行；平均股价为流通市值加权均价（对齐通达信 880003），剔除北交所；炸板/回封取东财涨停池。<br/>单日指标易被突发扰动欺骗，建议结合连续 3–5 日的序列（中位数、新高占比是否持续抬升）再下结论。</div>
+    </div>`;
+
+  let m=document.getElementById('insightModal');
+  if(!m){m=document.createElement('div');m.id='insightModal';m.className='limit-modal';document.body.appendChild(m);}
+  m.innerHTML=`<div class="limit-modal-box" style="width:min(1440px,96vw);max-height:90vh"><div class="limit-modal-head" style="cursor:move;font-size:16px"><span>数据解读<span style="font-size:12px;color:var(--dim);margin-left:8px">${b5.date||''}</span></span><button class="rule-btn" onclick="closeInsight()">关闭</button></div><div class="limit-modal-body" style="padding:16px 20px">${body}</div></div>`;
+  m.style.display='flex';
+  m.onclick=e=>{if(e.target===m) closeInsight();};
+}
+
+// 数据解读弹窗可拖动
+(function(){
+  let drag=null;
+  document.addEventListener('mousedown',e=>{
+    const box=e.target.closest('#insightModal .limit-modal-box');
+    if(!box||e.target.closest('button')) return;
+    const r=box.getBoundingClientRect();
+    drag={box,dx:e.clientX-r.left,dy:e.clientY-r.top};
+    box.style.position='fixed';
+    box.style.left=r.left+'px';
+    box.style.top=r.top+'px';
+    box.style.margin='0';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove',e=>{
+    if(!drag) return;
+    drag.box.style.left=(e.clientX-drag.dx)+'px';
+    drag.box.style.top=(e.clientY-drag.dy)+'px';
+  });
+  document.addEventListener('mouseup',()=>{drag=null;});
+})();
+
+function closeInsight(){const m=document.getElementById('insightModal'); if(m) m.style.display='none';}
 
 function closeLimitDetail(){const m=document.getElementById('limitModal'); if(m) m.style.display='none';}
 
@@ -1071,12 +1260,12 @@ function renderMarketOverview(){
   const _hi5P=_b5.hi5!=null?_b5.hi5/_nAll*100:null, _hi20P=_b5.hi20!=null?_b5.hi20/_nAll*100:null;
   const _lo5P=_b5.lo5!=null?_b5.lo5/_nAll*100:null, _lo20P=_b5.lo20!=null?_b5.lo20/_nAll*100:null;
   const _pxDate=_b5.date||'';
-  html+=`<div class="chart-panel" style="display:flex;flex-direction:row;align-items:flex-start;justify-content:center;gap:6px;padding-top:6px"><div style="flex:1;text-align:center"><div class="chart-title" style="font-size:13px;line-height:1.15;margin-bottom:2px;white-space:nowrap">等权指数</div><div style="font-size:24px;font-weight:700;font-family:Orbitron;line-height:1.1;color:var(--text)">${_ewIdx!=null?_ewIdx.toFixed(1):'--'}</div><div style="font-size:10px;font-family:Orbitron;font-weight:700;white-space:nowrap;line-height:1.15;color:${_ewRet==null?'var(--c-axis)':(_ewRet>=0?'var(--up)':'var(--down)')}">${_ewRet!=null?(_ewRet>0?'+':'')+_ewRet.toFixed(2)+'%':'--'}</div><div style="font-size:10px;color:var(--c-axis)">${_pxDate||''}</div></div><div style="flex:1;text-align:center"><div class="chart-title" style="font-size:13px;line-height:1.15;margin-bottom:2px;white-space:nowrap">中位数涨幅</div><div style="font-size:24px;font-weight:700;font-family:Orbitron;line-height:1.1;color:${_med==null?'var(--text)':(_med>=0?'var(--up)':'var(--down)')}">${_med!=null?(_med>0?'+':'')+_med.toFixed(2)+'%':'--'}</div><div style="font-size:10px;color:var(--c-axis)">当日</div></div><div style="flex:1;text-align:center"><div class="chart-title" style="font-size:13px;line-height:1.15;margin-bottom:2px;white-space:nowrap">平均股价</div><div style="font-size:24px;font-weight:700;font-family:Orbitron;line-height:1.1;color:var(--text)">${_avgPx!=null?_avgPx.toFixed(2):'--'}<span style="font-size:11px;font-weight:400">元</span></div><div style="font-size:10px;white-space:nowrap;font-family:Orbitron;font-weight:700;line-height:1.15;color:${_avgChg==null?'var(--c-axis)':(_avgChg>=0?'var(--up)':'var(--down)')}">环比 ${_avgChg!=null?(_avgChg>0?'+':'')+_avgChg.toFixed(2)+'%':'--'}</div></div></div>`;
+  html+=`<div class="chart-panel" style="display:flex;flex-direction:row;align-items:flex-start;justify-content:center;gap:6px;padding-top:6px"><div style="flex:1;text-align:center"><div class="chart-title" style="font-size:13px;line-height:1.15;margin-bottom:2px;white-space:nowrap">等权指数</div><div style="font-size:24px;font-weight:700;font-family:Orbitron;line-height:1.1;color:var(--text)">${_ewIdx!=null?_ewIdx.toFixed(1):'--'}</div><div style="font-size:10px;font-family:Orbitron;font-weight:700;white-space:nowrap;line-height:1.15;color:${_ewRet==null?'var(--c-axis)':(_ewRet>=0?'var(--up)':'var(--down)')}">${_ewRet!=null?(_ewRet>0?'+':'')+_ewRet.toFixed(2)+'%':'--'}</div><div style="font-size:10px;color:var(--c-axis)">${_pxDate||''}</div></div><div style="flex:1;text-align:center"><div class="chart-title" style="font-size:13px;line-height:1.15;margin-bottom:2px;white-space:nowrap">中位数涨幅</div><div style="font-size:24px;font-weight:700;font-family:Orbitron;line-height:1.1;color:${_med==null?'var(--text)':(_med>=0?'var(--up)':'var(--down)')}">${_med!=null?(_med>0?'+':'')+_med.toFixed(2)+'%':'--'}</div><div style="font-size:10px;color:var(--c-axis)">当日</div></div><div style="flex:1;text-align:center"><div class="chart-title" style="font-size:13px;line-height:1.15;margin-bottom:2px;white-space:nowrap">平均股价</div><div style="display:flex;gap:10px;justify-content:center;align-items:flex-start"><div title="流通市值加权均价（Σ流通市值÷Σ流通股本），对齐通达信 880003" style="cursor:help"><div style="font-size:22px;font-weight:700;font-family:Orbitron;line-height:1.1;color:var(--text);white-space:nowrap">${_avgPx!=null?_avgPx.toFixed(2):'--'}<span style="font-size:10px;font-weight:400">元</span></div><div style="font-size:10px;color:var(--text)">加权</div><div style="font-size:10px;white-space:nowrap;font-family:Orbitron;font-weight:700;line-height:1.15;color:${_avgChg==null?'var(--c-axis)':(_avgChg>=0?'var(--up)':'var(--down)')}">环比 ${_avgChg!=null?(_avgChg>0?'+':'')+_avgChg.toFixed(2)+'%':'--'}</div></div><div title="算术平均，被高价股拉高，仅作参考" style="cursor:help"><div style="font-size:16px;font-weight:700;font-family:Orbitron;line-height:1.1;color:var(--c-axis);white-space:nowrap">${_b5.avg_price_simple!=null?_b5.avg_price_simple.toFixed(2):'--'}</div><div style="font-size:10px;color:var(--text)">平均</div></div></div></div></div>`;
   html+=`<div class="chart-panel" style="position:relative;align-items:center;justify-content:center;display:flex;flex-direction:column"><div class="chart-title" style="position:absolute;left:14px;top:8px;margin:0">市场拥挤度</div><div style="font-size:24px;line-height:1.1;font-family:Orbitron;font-weight:700;color:${crowdOv>40?'var(--red)':crowdOv>30?'var(--orange)':'var(--green)'}">${crowdOv!=null?crowdOv.toFixed(1)+'%':'--'}</div><div style="font-size:10px;color:var(--c-axis);margin-top:0">前5%个股成交占比</div></div>`;
 
   const ls=mb.limit_stats||{};
   const ad=mb.advance_decline||{};
-  html+=`<div class="chart-panel"><div class="chart-title">涨跌停板统计</div><div style="display:flex;gap:10px;align-items:center;justify-content:center;flex:1"><div class="limit-stat-btn stat-btn" onclick="showLimitDetail('up')" title="点击查看涨停明细" style="text-align:center"><div style="color:var(--up);font-size:20px;font-weight:800;font-family:Orbitron;line-height:1.1">${ls.latest_limit_up??'--'}</div><div style="color:var(--text);font-size:10px;font-weight:700">涨停</div><div style="font-size:9px;color:var(--c-axis)">5日均 ${ls.limit_up_ma5??'--'}</div></div><div style="display:flex;flex-direction:column;gap:5px"><div class="limit-stat-btn stat-btn" onclick="showZhabanDetail()" title="点击查看炸板明细" style="text-align:center;padding:2px 10px;font-size:11px;color:var(--text);white-space:nowrap;line-height:1.35"><span style="color:var(--yellow);font-weight:700;font-family:Orbitron">${(DATA.zhaban&&DATA.zhaban.rate!=null)?DATA.zhaban.rate.toFixed(1)+'%':'--'}</span> 炸板率</div><div class="limit-stat-btn stat-btn" onclick="showZhabanDetail('reseal')" title="点击查看回封明细" style="text-align:center;padding:2px 10px;font-size:11px;color:var(--text);white-space:nowrap;line-height:1.35"><span style="color:var(--up);font-weight:700;font-family:Orbitron">${(DATA.zhaban&&DATA.zhaban.reseal)?DATA.zhaban.reseal.length:'--'}</span> 回封</div></div><div class="limit-stat-btn stat-btn" onclick="showLimitDetail('down')" title="点击查看跌停明细" style="text-align:center"><div style="color:var(--down);font-size:20px;font-weight:800;font-family:Orbitron;line-height:1.1">${ls.latest_limit_down??'--'}</div><div style="color:var(--text);font-size:10px;font-weight:700">跌停</div><div style="font-size:9px;color:var(--c-axis)">5日均 ${ls.limit_down_ma5??'--'}</div></div></div></div>`;
+  html+=`<div class="chart-panel"><div class="chart-title" title="涨停/跌停/炸板/回封统一取东财池口径（收盘价=涨停价且封单存在）；池缺失（如跌停池）时回退快照；北交所不在池内">涨跌停板统计</div><div style="display:flex;gap:10px;align-items:center;justify-content:center;flex:1"><div class="limit-stat-btn stat-btn" onclick="showLimitDetail('up')" title="点击查看涨停明细" style="text-align:center"><div style="color:var(--up);font-size:20px;font-weight:800;font-family:Orbitron;line-height:1.1">${(DATA.zhaban&&DATA.zhaban.zt_total)?DATA.zhaban.zt_total:(ls.latest_limit_up??'--')}</div><div style="color:var(--text);font-size:10px;font-weight:700">涨停</div><div style="font-size:9px;color:var(--c-axis)">5日均 ${(DATA.zhaban&&DATA.zhaban.zt_ma5!=null)?DATA.zhaban.zt_ma5:(ls.limit_up_ma5??'--')}</div></div><div style="display:flex;flex-direction:column;gap:5px"><div class="limit-stat-btn stat-btn" onclick="showZhabanDetail()" title="东财池口径：涨停 ${(DATA.zhaban&&DATA.zhaban.zt_total)||'--'} / 炸板 ${(DATA.zhaban&&DATA.zhaban.zb_total)||'--'}，与左侧快照口径略有差异" style="text-align:center;padding:2px 10px;font-size:11px;color:var(--text);white-space:nowrap;line-height:1.35"><span style="color:var(--up);font-weight:700;font-family:Orbitron">${(DATA.zhaban&&DATA.zhaban.rate!=null)?DATA.zhaban.rate.toFixed(1)+'%':'--'}</span> 炸板率</div><div class="limit-stat-btn stat-btn" onclick="showZhabanDetail('reseal')" title="点击查看回封明细" style="text-align:center;padding:2px 10px;font-size:11px;color:var(--text);white-space:nowrap;line-height:1.35"><span style="color:var(--up);font-weight:700;font-family:Orbitron">${(DATA.zhaban&&DATA.zhaban.reseal)?DATA.zhaban.reseal.length:'--'}</span> 回封</div></div><div class="limit-stat-btn stat-btn" onclick="showLimitDetail('down')" title="点击查看跌停明细" style="text-align:center"><div style="color:var(--down);font-size:20px;font-weight:800;font-family:Orbitron;line-height:1.1">${(DATA.zhaban&&DATA.zhaban.dt_total)?DATA.zhaban.dt_total:(ls.latest_limit_down??'--')}</div><div style="color:var(--text);font-size:10px;font-weight:700">跌停</div><div style="font-size:9px;color:var(--c-axis)">5日均 ${(DATA.zhaban&&DATA.zhaban.dt_ma5!=null)?DATA.zhaban.dt_ma5:(ls.limit_down_ma5??'--')}</div></div></div></div>`;
   const _udTotal=(ad.latest_up||0)+(ad.latest_down||0);
   const _udPct=((ad.latest_up!=null)&&(_b5.n||_udTotal))?(ad.latest_up)/(_b5.n||_udTotal)*100:null;
   const _p5=(_up5!=null&&_b5.n)?_up5/_b5.n*100:null;
@@ -1088,7 +1277,7 @@ function renderMarketOverview(){
   const ms=d.market_summary;
   if(ms&&ms.text){
     html+='<div class="chart-panel full" style="margin-bottom:14px;padding:14px 18px">'
-      +'<div class="chart-title" style="margin-bottom:8px">市场综述</div>'
+      +'<div class="chart-title" style="margin-bottom:8px">市场综述<button class="rule-btn" style="margin-left:10px;font-size:12px" onclick="showMarketInsight()">数据解读</button></div>'
       +'<div style="font-size:26px;line-height:1.7;color:var(--text)">'+ms.text+'</div></div>';
   }
 

@@ -209,6 +209,24 @@ def fetch_zhaban_pool():
             print(f"  [WARN] 池数据失败 {url.split('/')[-1]}: {e}")
             return 0, []
 
+    def _dt_pool():
+        for _sort in ("fund:asc", None):
+            try:
+                params = dict(base)
+                params["date"] = _trade
+                if _sort:
+                    params["sort"] = _sort
+                else:
+                    params.pop("sort", None)
+                r = sess.get("https://push2ex.eastmoney.com/getTopicDTPool",
+                             params=params, headers=hdr, timeout=20, verify=False)
+                d = (r.json() or {}).get("data") or {}
+                if d.get("tc"):
+                    return d.get("tc")
+            except Exception:
+                continue
+        return None
+
     zt_total, zt_pool = _pool("https://push2ex.eastmoney.com/getTopicZTPool")
     if not zt_total:
         time.sleep(1.5)
@@ -304,9 +322,48 @@ def fetch_zhaban_pool():
             continue
 
     rate = round(zb_total / (zt_total + zb_total) * 100, 2) if (zt_total + zb_total) else None
+    dt_total = _dt_pool()
+
+    # 池口径历史（用于 5 日均）
+    zt_ma5 = dt_ma5 = None
+    try:
+        _hf = os.path.join(DATA_DIR, "limit_pool_history.json")
+        _hh = json.load(open(_hf, encoding="utf-8")) if os.path.exists(_hf) else {}
+        _dstr = f"{_trade[:4]}-{_trade[4:6]}-{_trade[6:]}"
+        _hh[_dstr] = {"zt": zt_total, "zb": zb_total, "dt": dt_total}
+        _hh = {d: _hh[d] for d in sorted(_hh.keys())[-120:]}
+        json.dump(_hh, open(_hf, "w", encoding="utf-8"), ensure_ascii=False)
+        _zt5 = [v["zt"] for d, v in _hh.items() if d <= _dstr and v.get("zt") is not None][-5:]
+        _dt5 = [v["dt"] for d, v in _hh.items() if d <= _dstr and v.get("dt") is not None][-5:]
+        if _zt5:
+            zt_ma5 = round(sum(_zt5) / len(_zt5), 1)
+        if _dt5:
+            dt_ma5 = round(sum(_dt5) / len(_dt5), 1)
+    except Exception:
+        pass
+
+    zt_list = []
+    for it in zt_pool:
+        try:
+            zt_list.append({
+                "code": str(it.get("c")), "name": str(it.get("n")),
+                "industry": str(it.get("hybk") or ""),
+                "price": round(float(it.get("p") or 0) / 1000, 2),
+                "chg": round(float(it.get("zdp") or 0), 2),
+                "turnover": round(float(it.get("hs") or 0), 2),
+                "amount_yi": round(float(it.get("amount") or 0) / 1e8, 2),
+                "first_seal": str(it.get("fbt") or "").zfill(6),
+                "break_cnt": it.get("zbc") or 0,
+                "lianban": it.get("lbc") or 0,
+            })
+        except Exception:
+            continue
+
     payload = {"date": f"{_trade[:4]}-{_trade[4:6]}-{_trade[6:]}",
-               "zt_total": zt_total, "zb_total": zb_total, "rate": rate,
-               "index_chg": round(idx_chg, 2), "list": rows, "reseal": reseal}
+               "zt_total": zt_total, "zb_total": zb_total, "dt_total": dt_total,
+               "rate": rate, "zt_ma5": zt_ma5, "dt_ma5": dt_ma5,
+               "index_chg": round(idx_chg, 2), "list": rows, "reseal": reseal,
+               "zt_list": zt_list}
     with open(os.path.join(DATA_DIR, "zhaban.json"), "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False)
     print(f"  [OK] 炸板率 {rate}%（涨停 {zt_total} / 炸板 {zb_total} / 回封 {len(reseal)}）")
@@ -438,13 +495,38 @@ def fetch_weipan_cons(limit=400):
                    if z.get("price") and z["price"] > 0 and _is_hs(z["code"])]
         _prices += [z["price"] for z in st_list
                     if z.get("price") and z["price"] > 0 and _is_hs(z["code"])]
-        _avg_px = round(sum(_prices)/len(_prices), 3) if _prices else None
+        _avg_px_simple = round(sum(_prices)/len(_prices), 3) if _prices else None
+        # 880003 口径：流通市值加权均价 = Σ流通市值 ÷ Σ流通股本
+        _mv_sum = _sh_sum = 0.0
+        for z in list(valid) + list(st_list):
+            try:
+                if not _is_hs(z["code"]):
+                    continue
+                p = z.get("price"); fmv = z.get("float_mv_yi")
+                if p and p > 0 and fmv:
+                    _mv_sum += fmv * 1e8
+                    _sh_sum += fmv * 1e8 / p
+            except Exception:
+                continue
+        _avg_px = round(_mv_sum / _sh_sum, 3) if _sh_sum else _avg_px_simple
         # 昨收均价（同一样本），用于精确环比
         _prev_prices = [z["prev_close"] for z in valid
                         if z.get("prev_close") and z["prev_close"] > 0 and _is_hs(z["code"])]
         _prev_prices += [z["prev_close"] for z in st_list
                          if z.get("prev_close") and z["prev_close"] > 0 and _is_hs(z["code"])]
-        _avg_prev = round(sum(_prev_prices)/len(_prev_prices), 3) if _prev_prices else None
+        _avg_prev_simple = round(sum(_prev_prices)/len(_prev_prices), 3) if _prev_prices else None
+        _mv_s = _sh_s = 0.0
+        for z in list(valid) + list(st_list):
+            try:
+                if not _is_hs(z["code"]):
+                    continue
+                pc = z.get("prev_close"); fmv = z.get("float_mv_yi")
+                if pc and pc > 0 and fmv:
+                    _mv_s += fmv * 1e8
+                    _sh_s += fmv * 1e8 / pc
+            except Exception:
+                continue
+        _avg_prev = round(_mv_s / _sh_s, 3) if _sh_s else _avg_prev_simple
         _avg_chg = round((_avg_px / _avg_prev - 1) * 100, 2) if (_avg_px and _avg_prev) else None
         try:
             _apf = os.path.join(DATA_DIR, "avg_price_history.json")
@@ -485,21 +567,54 @@ def fetch_weipan_cons(limit=400):
         print(f"  [INFO] 全A等权收益 {_ew}% -> 等权指数 {_ew_idx}")
 
         # 创N日新高/新低家数（同花顺）
-        _hi5 = _hi20 = _lo5 = _lo20 = None
+        _hi5 = _hi20 = _hi60 = _lo5 = _lo20 = None
         try:
             _hi5 = len(ak.stock_rank_xstp_ths(symbol="5日均线"))
             _hi20 = len(ak.stock_rank_xstp_ths(symbol="20日均线"))
+            _hi60 = len(ak.stock_rank_xstp_ths(symbol="60日均线"))
             _lo5 = len(ak.stock_rank_xxtp_ths(symbol="5日均线"))
             _lo20 = len(ak.stock_rank_xxtp_ths(symbol="20日均线"))
-            print(f"  [OK] 新高/新低：5日 {_hi5}/{_lo5}，20日 {_hi20}/{_lo20}")
+            print(f"  [OK] 新高/新低：5日 {_hi5}/{_lo5}，20日 {_hi20}/{_lo20}，60日新高 {_hi60}")
         except Exception as e:
             print(f"  [WARN] 新高新低统计失败: {e}")
+
+        if len(_all_chg) < 4000:
+            print(f"  [WARN] 快照样本不足（{len(_all_chg)} 只），跳过本次宽度/比例写入以免污染数据")
+            raise RuntimeError("snapshot incomplete")
+
+        def _cnt(lo, hi):
+            return sum(1 for c in _all_chg if (lo is None or c > lo) and (hi is None or c <= hi))
+        _bins = {"gt5": sum(1 for c in _all_chg if c >= 5.0),
+                 "p2_5": _cnt(2.0, 5.0), "p0_2": _cnt(0.0, 2.0),
+                 "m2_0": _cnt(-2.0, 0.0), "m5_m2": _cnt(-5.0, -2.0),
+                 "lt5": sum(1 for c in _all_chg if c <= -5.0)}
+
+        # 序列历史（用于连续 3-5 日跟踪）
+        _hist_payload = []
+        try:
+            _bhf = os.path.join(DATA_DIR, "breadth_history.json")
+            _bh = json.load(open(_bhf, encoding="utf-8")) if os.path.exists(_bhf) else {}
+            _bh[trade_date] = {
+                "med": round(_med, 2),
+                "up_pct": round(sum(1 for c in _all_chg if c > 0) / len(_all_chg) * 100, 2) if _all_chg else None,
+                "up5_pct": round(_up5 / len(_all_chg) * 100, 2) if _all_chg else None,
+                "hi20_pct": round(_hi20 / len(_all_chg) * 100, 2) if (_hi20 is not None and _all_chg) else None,
+                "hi60_pct": round(_hi60 / len(_all_chg) * 100, 2) if (_hi60 is not None and _all_chg) else None,
+                "ew": _ew,
+            }
+            _bh = {k: _bh[k] for k in sorted(_bh.keys())[-60:]}
+            json.dump(_bh, open(_bhf, "w", encoding="utf-8"), ensure_ascii=False)
+            _hist_payload = [{"date": k, **v} for k, v in sorted(_bh.items())][-10:]
+        except Exception:
+            pass
 
         with open(os.path.join(DATA_DIR, "breadth5.json"), "w", encoding="utf-8") as f:
             json.dump({"date": trade_date, "up5": _up5, "down5": _dn5, "n": len(_all_chg),
                        "median_chg": round(_med, 2), "avg_price": _avg_px,
+                       "avg_price_simple": _avg_px_simple,
                        "avg_price_chg": _avg_chg, "ew_ret": _ew, "ew_index": _ew_idx,
-                       "hi5": _hi5, "hi20": _hi20, "lo5": _lo5, "lo20": _lo20},
+                       "hi5": _hi5, "hi20": _hi20, "hi60": _hi60, "lo5": _lo5, "lo20": _lo20,
+                       "bins": _bins, "hist": _hist_payload},
                       f, ensure_ascii=False)
         print(f"  [OK] 5%以上：上涨 {_up5} / 下跌 {_dn5}（样本 {len(_all_chg)}）")
     except Exception as e:
@@ -1021,9 +1136,12 @@ def fetch_market_breadth():
 
     # 各板涨跌停阈值：主板 10%、创业/科创 20%、北交所 30%，ST 5%
     lim = pd.Series(9.8, index=chg.index)
-    lim[code.str.startswith(("300", "301", "688"))] = 19.8
-    lim[code.str.startswith(("8", "4", "92"))] = 29.8
-    lim[name.str.contains("ST", na=False)] = 4.8
+    b20 = code.str.startswith(("300", "301", "688"))
+    b30 = code.str.startswith(("8", "4", "92"))
+    lim[b20] = 19.8
+    lim[b30] = 29.8
+    # 新规：ST 股已取消 5% 限制，与所属板块一致（主板 10%、创业/科创 20%、北交所 30%）
+    # 实测 2026-11：ST节能/启环/亿晶 均为 ±10%，故不再做 ST 特殊处理
     limit_up = int((chg >= lim - 0.15).sum())
     limit_down = int((chg <= -(lim - 0.15)).sum())
 
