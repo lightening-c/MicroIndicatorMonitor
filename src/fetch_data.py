@@ -528,6 +528,7 @@ def fetch_weipan_cons(limit=400):
                 continue
         _avg_prev = round(_mv_s / _sh_s, 3) if _sh_s else _avg_prev_simple
         _avg_chg = round((_avg_px / _avg_prev - 1) * 100, 2) if (_avg_px and _avg_prev) else None
+        _avg_chg_simple = round((_avg_px_simple / _avg_prev_simple - 1) * 100, 2) if (_avg_px_simple and _avg_prev_simple) else None
         try:
             _apf = os.path.join(DATA_DIR, "avg_price_history.json")
             _hist = json.load(open(_apf, encoding="utf-8")) if os.path.exists(_apf) else {}
@@ -612,6 +613,7 @@ def fetch_weipan_cons(limit=400):
             json.dump({"date": trade_date, "up5": _up5, "down5": _dn5, "n": len(_all_chg),
                        "median_chg": round(_med, 2), "avg_price": _avg_px,
                        "avg_price_simple": _avg_px_simple,
+                       "avg_price_simple_chg": _avg_chg_simple,
                        "avg_price_chg": _avg_chg, "ew_ret": _ew, "ew_index": _ew_idx,
                        "hi5": _hi5, "hi20": _hi20, "hi60": _hi60, "lo5": _lo5, "lo20": _lo20,
                        "bins": _bins, "hist": _hist_payload},
