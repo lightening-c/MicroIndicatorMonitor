@@ -455,8 +455,13 @@ function renderTabFreshness(){
   requestAnimationFrame(()=>{const f=el.querySelector('.tab-fresh-fill'); if(f) f.style.width=pct+'%';});
 }
 
-function showLimitDetail(kind){
-  const d=(DATA.market_breadth||{}).limit_details||{};
+async function showLimitDetail(kind){
+  let d=null;
+  try{
+    const r=await fetch('data/limit_details.json?t='+Date.now(),{cache:'no-store'});
+    if(r.ok) d=await r.json();
+  }catch(e){}
+  if(!d) d=(DATA.market_breadth||{}).limit_details||{};
   const rows=(kind==='up'?d.up:d.down)||[];
   const title=kind==='up'?'涨停明细':'跌停明细';
   const body=rows.length
