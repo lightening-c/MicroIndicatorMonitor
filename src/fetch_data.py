@@ -179,6 +179,140 @@ def _sina_quote(codes):
     return out
 
 
+def fetch_zhaban_pool():
+    """东财涨停池与炸板池：计算炸板率并保存炸板明细及原因分类。"""
+    import requests as _rq
+    import urllib3 as _u3
+    _u3.disable_warnings()
+    sess = _rq.Session()
+    sess.trust_env = False
+    hdr = {"User-Agent": "Mozilla/5.0", "Referer": "https://quote.eastmoney.com/"}
+    # 交易日期：以上证指数最新日期为准（周末/节假日也指向最近交易日）
+    _trade = datetime.now().strftime("%Y%m%d")
+    try:
+        _shd = pd.read_csv(os.path.join(DATA_DIR, "sh_index.csv"), usecols=["日期"], dtype={"日期": str})
+        if len(_shd):
+            _trade = str(_shd["日期"].max()).replace("-", "")
+    except Exception:
+        pass
+    base = {"ut": "7eea3edcaed734bea9cbfc24409ed989", "dpt": "wz.ztzt",
+            "Pageindex": 0, "pagesize": 1000, "sort": "fbt:asc"}
+
+    def _pool(url):
+        try:
+            params = dict(base)
+            params["date"] = _trade
+            r = sess.get(url, params=params, headers=hdr, timeout=20, verify=False)
+            d = (r.json() or {}).get("data") or {}
+            return d.get("tc") or 0, d.get("pool") or []
+        except Exception as e:
+            print(f"  [WARN] 池数据失败 {url.split('/')[-1]}: {e}")
+            return 0, []
+
+    zt_total, zt_pool = _pool("https://push2ex.eastmoney.com/getTopicZTPool")
+    if not zt_total:
+        time.sleep(1.5)
+        zt_total, zt_pool = _pool("https://push2ex.eastmoney.com/getTopicZTPool")
+    if not zt_total:
+        try:
+            _old = json.load(open(os.path.join(DATA_DIR, "zhaban.json"), encoding="utf-8"))
+            if _old.get("date") == f"{_trade[:4]}-{_trade[4:6]}-{_trade[6:]}" and _old.get("zt_total"):
+                zt_total = _old["zt_total"]
+                print(f"  [WARN] 涨停池为空，沿用上次 {zt_total}")
+        except Exception:
+            pass
+    zb_total, zb_pool = _pool("https://push2ex.eastmoney.com/getTopicZBPool")
+    if not zt_total and not zb_total:
+        return None
+
+    # 大盘当日涨跌（用于区分被动炸板）
+    idx_chg = 0.0
+    try:
+        _sh = pd.read_csv(os.path.join(DATA_DIR, "sh_index.csv"), dtype={"日期": str})
+        _cl = pd.to_numeric(_sh["close"], errors="coerce").dropna()
+        if len(_cl) >= 2 and _cl.iloc[-2]:
+            idx_chg = float((_cl.iloc[-1] / _cl.iloc[-2] - 1) * 100)
+    except Exception:
+        pass
+
+    def _fmt(t):
+        t = int(t or 0)
+        return f"{t // 10000:02d}:{t % 10000 // 100:02d}" if t else "--"
+
+    def _classify(it):
+        fbt = it.get("fbt") or 0          # 首次封板时间 HHMMSS
+        zbc = it.get("zbc") or 0          # 炸板次数
+        lbc = it.get("lbc") or 0          # 连板数
+        hs = it.get("hs") or 0            # 换手率
+        zdp = it.get("zdp") or 0
+        t = _fmt(fbt)
+        base = f"炸板{zbc}次，换手{hs:.1f}%，收盘{zdp:+.2f}%，收盘未回封"
+        if fbt >= 140000:
+            return f"恶性炸板（尾盘兑现）：{t} 才封板、尾盘炸开；{base}"
+        if zbc >= 2:
+            return f"恶性炸板（反复炸板）：封板后被炸开 {zbc} 次；{base}"
+        if lbc >= 3 and zdp < 5:
+            return f"恶性炸板（高位连板兑现）：{lbc} 连板高位炸开，收盘仅{zdp:+.1f}%；{base}"
+        if fbt <= 103000 and idx_chg < -0.5:
+            return f"被动炸板（大盘拖累）：{t} 早盘封板，当日大盘{idx_chg:+.2f}%；{base}"
+        if fbt <= 103000:
+            return f"良性炸板（早盘换手，尾盘未回封）：{t} 早盘封板后炸开洗盘，尾盘未能重新封回；{base}"
+        if hs < 5 and zdp < 5:
+            return f"诱多炸板（封单虚/出货）：封板晚且换手仅{hs:.1f}%；{base}"
+        return f"其他炸板：{base}"
+
+    rows = []
+    for it in zb_pool:
+        try:
+            rows.append({
+                "code": str(it.get("c")),
+                "name": str(it.get("n")),
+                "industry": str(it.get("hybk") or ""),
+                "price": round(float(it.get("p") or 0) / 1000, 2),
+                "chg": round(float(it.get("zdp") or 0), 2),
+                "turnover": round(float(it.get("hs") or 0), 2),
+                "amount_yi": round(float(it.get("amount") or 0) / 1e8, 2),
+                "mv_yi": round(float(it.get("ltsz") or 0) / 1e8, 1),
+                "first_seal": str(it.get("fbt") or "").zfill(6),
+                "break_cnt": it.get("zbc") or 0,
+                "lianban": it.get("lbc") or 0,
+                "reason": _classify(it),
+            })
+        except Exception:
+            continue
+
+    # 回封股：涨停池中曾炸板（zbc>=1）又回封的
+    reseal = []
+    for it in zt_pool:
+        try:
+            if int(it.get("zbc") or 0) < 1:
+                continue
+            reseal.append({
+                "code": str(it.get("c")), "name": str(it.get("n")),
+                "industry": str(it.get("hybk") or ""),
+                "price": round(float(it.get("p") or 0) / 1000, 2),
+                "chg": round(float(it.get("zdp") or 0), 2),
+                "turnover": round(float(it.get("hs") or 0), 2),
+                "amount_yi": round(float(it.get("amount") or 0) / 1e8, 2),
+                "mv_yi": round(float(it.get("ltsz") or 0) / 1e8, 1),
+                "first_seal": str(it.get("fbt") or "").zfill(6),
+                "break_cnt": it.get("zbc") or 0,
+                "lianban": it.get("lbc") or 0,
+                "reason": f"回封（良性换手板）：炸板{it.get('zbc')}次后重新封回；首次封板{_fmt(it.get('fbt'))}，换手{float(it.get('hs') or 0):.1f}%，收盘{float(it.get('zdp') or 0):+.2f}%",
+            })
+        except Exception:
+            continue
+
+    rate = round(zb_total / (zt_total + zb_total) * 100, 2) if (zt_total + zb_total) else None
+    payload = {"date": f"{_trade[:4]}-{_trade[4:6]}-{_trade[6:]}",
+               "zt_total": zt_total, "zb_total": zb_total, "rate": rate,
+               "index_chg": round(idx_chg, 2), "list": rows, "reseal": reseal}
+    with open(os.path.join(DATA_DIR, "zhaban.json"), "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False)
+    print(f"  [OK] 炸板率 {rate}%（涨停 {zt_total} / 炸板 {zb_total} / 回封 {len(reseal)}）")
+    return payload
+
+
 def fetch_weipan_cons(limit=400):
     """微盘400成分股：沪深 A 股按总市值升序取前 400（剔除 ST/退市/停牌）。
 
@@ -197,7 +331,7 @@ def fetch_weipan_cons(limit=400):
             r = sess.get("https://push2.eastmoney.com/api/qt/clist/get",
                          params={"pn": pn, "pz": 100, "po": 0, "np": 1,
                                  "fltt": 2, "invt": 2, "fid": "f20", "fs": fs,
-                                 "fields": "f12,f14,f2,f3,f6,f8,f20,f100"},
+                                 "fields": "f12,f14,f2,f3,f6,f8,f18,f20,f21,f26,f100"},
                          headers=hdr, timeout=15, verify=False)
             items = ((r.json() or {}).get("data") or {}).get("diff") or []
         except Exception:
@@ -214,6 +348,13 @@ def fetch_weipan_cons(limit=400):
             price = float(x.get("f2"))
             chg = float(x.get("f3"))
             mv = float(x.get("f20"))
+            fmv = float(x.get("f21") or 0)
+            try:
+                prev_close = float(x.get("f18"))
+            except Exception:
+                prev_close = None
+            _ld = str(x.get("f26") or "").strip()
+            list_date = f"{_ld[:4]}-{_ld[4:6]}-{_ld[6:8]}" if len(_ld) == 8 and _ld.isdigit() else ""
             if any(k in name.upper() for k in ("ST", "退", "PT", "N ")):
                 # ST/退市风险股单独留存，供看板「ST板块」按钮使用
                 if price > 0 and "退" not in name:
@@ -224,6 +365,9 @@ def fetch_weipan_cons(limit=400):
                         "amount_yi": round(float(x.get("f6") or 0) / 1e8, 2),
                         "turnover": round(float(x.get("f8") or 0), 2),
                         "mv_yi": round(mv / 1e8, 1),
+                        "float_mv_yi": round(fmv / 1e8, 1) if fmv else None,
+                        "list_date": list_date,
+                        "prev_close": prev_close,
                         "is_star": name.upper().startswith("*ST"),
                     })
                 continue
@@ -238,6 +382,9 @@ def fetch_weipan_cons(limit=400):
                 "amount_yi": round(float(x.get("f6") or 0) / 1e8, 2),
                 "turnover": round(float(x.get("f8") or 0), 2),
                 "mv_yi": round(mv / 1e8, 1),
+                "float_mv_yi": round(fmv / 1e8, 1) if fmv else None,
+                "list_date": list_date,
+                "prev_close": prev_close,
             })
         except Exception:
             continue
@@ -274,6 +421,89 @@ def fetch_weipan_cons(limit=400):
     with open(os.path.join(DATA_DIR, "weipan_cons.json"), "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False)
     print(f"  [OK] 微盘400 成分 {len(picked)} 只，最新市值 {picked[-1]['mv_yi']:.1f} 亿，日期 {trade_date}")
+
+    # ── 5% 以上涨跌家数 ──
+    try:
+        _all_chg = [z["chg"] for z in valid if z.get("chg") is not None]
+        _all_chg += [z["chg"] for z in st_list if z.get("chg") is not None]
+        _up5 = sum(1 for c in _all_chg if c >= 5.0)
+        _dn5 = sum(1 for c in _all_chg if c <= -5.0)
+        _sorted = sorted(_all_chg)
+        _med = _sorted[len(_sorted)//2] if len(_sorted) % 2 else (_sorted[len(_sorted)//2-1]+_sorted[len(_sorted)//2])/2
+
+        # 全A算术平均股价（等权，对标通达信 880003）
+        def _is_hs(c):
+            return not str(c).startswith(("8", "4", "92"))
+        _prices = [z["price"] for z in valid
+                   if z.get("price") and z["price"] > 0 and _is_hs(z["code"])]
+        _prices += [z["price"] for z in st_list
+                    if z.get("price") and z["price"] > 0 and _is_hs(z["code"])]
+        _avg_px = round(sum(_prices)/len(_prices), 3) if _prices else None
+        # 昨收均价（同一样本），用于精确环比
+        _prev_prices = [z["prev_close"] for z in valid
+                        if z.get("prev_close") and z["prev_close"] > 0 and _is_hs(z["code"])]
+        _prev_prices += [z["prev_close"] for z in st_list
+                         if z.get("prev_close") and z["prev_close"] > 0 and _is_hs(z["code"])]
+        _avg_prev = round(sum(_prev_prices)/len(_prev_prices), 3) if _prev_prices else None
+        _avg_chg = round((_avg_px / _avg_prev - 1) * 100, 2) if (_avg_px and _avg_prev) else None
+        try:
+            _apf = os.path.join(DATA_DIR, "avg_price_history.json")
+            _hist = json.load(open(_apf, encoding="utf-8")) if os.path.exists(_apf) else {}
+            _prev = None
+            for d in sorted(_hist.keys()):
+                if d < trade_date:
+                    _prev = _hist[d]
+            if _avg_chg is None and _prev and _avg_px:
+                _avg_chg = round((_avg_px / _prev - 1) * 100, 2)
+            if _avg_px:
+                _hist[trade_date] = _avg_px
+                _keep = sorted(_hist.keys())[-250:]
+                json.dump({d: _hist[d] for d in _keep}, open(_apf, "w", encoding="utf-8"), ensure_ascii=False)
+        except Exception as e:
+            print(f"  [WARN] 平均股价历史失败: {e}")
+        print(f"  [INFO] 全A平均股价 {_avg_px} 元，环比 {_avg_chg}%")
+
+        # 全A收益率等权指数（每日等权平均收益复利，基点 1000）
+        _ew = round(sum(_all_chg)/len(_all_chg), 4) if _all_chg else None
+        _ew_idx = None
+        try:
+            _ewf = os.path.join(DATA_DIR, "ew_index_history.json")
+            _ewh = json.load(open(_ewf, encoding="utf-8")) if os.path.exists(_ewf) else {}
+            _prev_idx = None
+            for d in sorted(_ewh.keys()):
+                if d < trade_date:
+                    _prev_idx = _ewh[d]
+            if _prev_idx and _ew is not None:
+                _ew_idx = round(_prev_idx * (1 + _ew / 100), 3)
+            else:
+                _ew_idx = 1000.0
+            _ewh[trade_date] = _ew_idx
+            _keep = sorted(_ewh.keys())[-250:]
+            json.dump({d: _ewh[d] for d in _keep}, open(_ewf, "w", encoding="utf-8"), ensure_ascii=False)
+        except Exception as e:
+            print(f"  [WARN] 等权指数失败: {e}")
+        print(f"  [INFO] 全A等权收益 {_ew}% -> 等权指数 {_ew_idx}")
+
+        # 创N日新高/新低家数（同花顺）
+        _hi5 = _hi20 = _lo5 = _lo20 = None
+        try:
+            _hi5 = len(ak.stock_rank_xstp_ths(symbol="5日均线"))
+            _hi20 = len(ak.stock_rank_xstp_ths(symbol="20日均线"))
+            _lo5 = len(ak.stock_rank_xxtp_ths(symbol="5日均线"))
+            _lo20 = len(ak.stock_rank_xxtp_ths(symbol="20日均线"))
+            print(f"  [OK] 新高/新低：5日 {_hi5}/{_lo5}，20日 {_hi20}/{_lo20}")
+        except Exception as e:
+            print(f"  [WARN] 新高新低统计失败: {e}")
+
+        with open(os.path.join(DATA_DIR, "breadth5.json"), "w", encoding="utf-8") as f:
+            json.dump({"date": trade_date, "up5": _up5, "down5": _dn5, "n": len(_all_chg),
+                       "median_chg": round(_med, 2), "avg_price": _avg_px,
+                       "avg_price_chg": _avg_chg, "ew_ret": _ew, "ew_index": _ew_idx,
+                       "hi5": _hi5, "hi20": _hi20, "lo5": _lo5, "lo20": _lo20},
+                      f, ensure_ascii=False)
+        print(f"  [OK] 5%以上：上涨 {_up5} / 下跌 {_dn5}（样本 {len(_all_chg)}）")
+    except Exception as e:
+        print(f"  [WARN] 5%涨跌统计失败: {e}")
 
     # ── ST 板块快照 ──
     try:
@@ -332,7 +562,9 @@ def fetch_weipan_cons(limit=400):
                            "industry": (z or {}).get("industry", ""),
                            "price": (z or {}).get("price"),
                            "chg": (z or {}).get("chg"),
-                           "mv_yi": (z or {}).get("mv_yi")}
+                           "mv_yi": (z or {}).get("mv_yi"),
+                           "float_mv_yi": (z or {}).get("float_mv_yi"),
+                           "list_date": (z or {}).get("list_date")}
                     if direction == "add":
                         row["reason"] = "新纳入 ST（戴帽）"
                     else:
@@ -389,6 +621,8 @@ def fetch_weipan_cons(limit=400):
                 if z:
                     base = {"code": code, "name": z["name"], "industry": z["industry"],
                             "price": z["price"], "chg": z["chg"], "mv_yi": z["mv_yi"],
+                            "float_mv_yi": z.get("float_mv_yi"),
+                            "list_date": z.get("list_date"),
                             "rank": rank_of.get(code), "in_zz2000": bool(z.get("in_zz2000"))}
                 else:
                     base = {"code": code, "name": raw_by_code.get(code, code),
@@ -2004,6 +2238,17 @@ def fetch_all():
     except Exception as e:
         print(f"  [ERR] 两市成交额获取失败: {e}")
         results["failed"].append("turnover_all")
+
+    # ── 8.64 炸板池 ──
+    try:
+        zb = fetch_zhaban_pool()
+        if zb:
+            results["success"].append("zhaban")
+        else:
+            results["failed"].append("zhaban")
+    except Exception as e:
+        print(f"  [ERR] 炸板池失败: {e}")
+        results["failed"].append("zhaban")
 
     # ── 8.65 微盘400 成分股 ──
     try:
