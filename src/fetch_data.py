@@ -349,7 +349,7 @@ def _breadth_em():
             "pn": str(pn), "pz": "100", "po": "1", "np": "1",
             "ut": "bd1d9ddb04089700cf9c27f6f7426281", "fltt": "2", "invt": "2",
             "fid": "f12", "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048",
-            "fields": "f2,f3,f10,f12,f14", "_": str(int(time.time() * 1000)),
+            "fields": "f2,f3,f6,f10,f12,f14", "_": str(int(time.time() * 1000)),
         }
         r = requests.get(url, params=params, timeout=20,
                          headers={"User-Agent": "Mozilla/5.0", "Referer": "https://quote.eastmoney.com/"})
@@ -374,7 +374,8 @@ def _breadth_em():
     code = pd.Series([str(x.get("f12") or "") for x in rows])
     px = pd.to_numeric(pd.Series([x.get("f2") for x in rows]), errors="coerce")
     vr = pd.to_numeric(pd.Series([x.get("f10") for x in rows]), errors="coerce")
-    return chg, name, code, px, vr
+    amt = pd.to_numeric(pd.Series([x.get("f6") for x in rows]), errors="coerce")
+    return chg, name, code, px, vr, amt
 
 
 def _stock_board(c):
@@ -415,7 +416,7 @@ def fetch_market_breadth():
                 print("  [SKIP] 周末且无法确认交易日，跳过市场宽度")
                 return None
 
-    chg = name = code = px = vr = None
+    chg = name = code = px = vr = amt = None
     try:
         d = ak.stock_zh_a_spot()
         code = d["代码"].astype(str)
@@ -426,20 +427,21 @@ def fetch_market_breadth():
         if chg.notna().sum() < 1000:
             raise RuntimeError("新浪样本不足")
         src = "新浪"
-        # 新浪快照无「量比」，用东财单次 clist 补齐现价/量比
+        # 新浪快照无「量比/成交额」补齐字段，用东财单次 clist 分页数据补齐
         em = _breadth_em()
         if em:
-            _, _, ecode, epx, evr = em
-            m = dict(zip(ecode.astype(str).str[-6:].str.zfill(6), zip(epx, evr)))
+            _, _, ecode, epx, evr, eamt = em
+            m = dict(zip(ecode.astype(str).str[-6:].str.zfill(6), zip(epx, evr, eamt)))
             keys = code.astype(str).str[-6:].str.zfill(6)
-            px = keys.map(lambda c: m.get(c, (None, None))[0])
-            vr = keys.map(lambda c: m.get(c, (None, None))[1])
+            px = keys.map(lambda c: m.get(c, (None, None, None))[0])
+            vr = keys.map(lambda c: m.get(c, (None, None, None))[1])
+            amt = keys.map(lambda c: m.get(c, (None, None, None))[2])
     except Exception as e:
         print(f"  [WARN] 新浪快照失败 {type(e).__name__}，改用东财")
         try:
             got = _breadth_em()
             if got:
-                chg, name, code, px, vr = got
+                chg, name, code, px, vr, amt = got
                 src = "东财"
         except Exception as e2:
             print(f"  [ERR] 东财也失败 {type(e2).__name__}")
@@ -473,12 +475,14 @@ def fetch_market_breadth():
         info = swmap.get(c) or {}
         price = float(px.loc[i]) if px is not None and pd.notna(px.loc[i]) else None
         ratio = float(vr.loc[i]) if vr is not None and pd.notna(vr.loc[i]) else None
+        amount = float(amt.loc[i]) if amt is not None and pd.notna(amt.loc[i]) else None
         return {"code": c, "name": str(name.loc[i]),
                 "board": _stock_board(c),
                 "industry": info.get("l3") or info.get("l2") or _stock_board(c),
                 "chg": round(float(chg.loc[i]), 2),
                 "price": round(price, 2) if price is not None else None,
-                "vr": round(ratio, 2) if ratio is not None else None}
+                "vr": round(ratio, 2) if ratio is not None else None,
+                "amount_yi": round(amount / 1e8, 2) if amount is not None else None}
 
     try:
         detail = {"date": trade_date,
