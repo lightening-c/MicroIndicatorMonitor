@@ -206,7 +206,7 @@ indicators:
       frequency: 每日
       description: 大盘价值风格
       akshare_func: stock_zh_index_daily
-      akshare_params: { symbol: sz399372 }
+      akshare_params: { symbol: sz399373 }
 
     - id: lg_growth
       name: 大盘成长
@@ -215,7 +215,7 @@ indicators:
       frequency: 每日
       description: 大盘成长风格
       akshare_func: stock_zh_index_daily
-      akshare_params: { symbol: sz399373 }
+      akshare_params: { symbol: sz399372 }
 
     - id: md_value
       name: 中盘价值
@@ -224,7 +224,7 @@ indicators:
       frequency: 每日
       description: 中盘价值风格
       akshare_func: stock_zh_index_daily
-      akshare_params: { symbol: sz399374 }
+      akshare_params: { symbol: sz399375 }
 
     - id: md_growth
       name: 中盘成长
@@ -233,7 +233,7 @@ indicators:
       frequency: 每日
       description: 中盘成长风格
       akshare_func: stock_zh_index_daily
-      akshare_params: { symbol: sz399375 }
+      akshare_params: { symbol: sz399374 }
 
     - id: sm_value
       name: 小盘价值
@@ -242,7 +242,7 @@ indicators:
       frequency: 每日
       description: 小盘价值风格
       akshare_func: stock_zh_index_daily
-      akshare_params: { symbol: sz399376 }
+      akshare_params: { symbol: sz399377 }
 
     - id: sm_growth
       name: 小盘成长
@@ -251,7 +251,7 @@ indicators:
       frequency: 每日
       description: 小盘成长风格
       akshare_func: stock_zh_index_daily
-      akshare_params: { symbol: sz399377 }
+      akshare_params: { symbol: sz399376 }
 
 # 图表配置
 chart:
